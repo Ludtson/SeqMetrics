@@ -116,3 +116,29 @@ python run_features.py --modules basic,tail_hydrophobicity \
 modules need are checked before running. `--batch` and `--nt`/`--aa` are
 mutually exclusive -- pick one mode per invocation. See
 `run_features.py --help` for the full flag list.
+
+### Concurrency: `--jobs N`
+
+```
+python run_features.py --modules composition,aggregation \
+    --batch species_fastas/ --out-dir outputs/ --jobs 8
+```
+
+Runs up to `N` `(module, file)` task pairs at once via a thread pool --
+covers both many species files under one module, and several modules on
+one single-file input. Default `1` (fully sequential). Each task already
+writes to its own scratch dir and output path, so this is safe to raise;
+the real constraint is WSL headroom, since a WSL-bridged module spawns
+one `wsl.exe`/conda session per task -- don't set this arbitrarily high
+on a machine with limited WSL capacity. One failed task no longer aborts
+the rest of the batch, but the process still exits `1` if anything failed.
+
+### Audit log
+
+Every invocation writes a plain-text log to
+`<out_dir>/logs/run_<timestamp>.log` (extension is `.log`, e.g.
+`outputs/logs/run_20260921_005146.log`) -- the exact command line, each
+resolved module's environment and a best-effort tool version, every
+`--module-ref` path actually used, and a result line per `(module, file)`
+task. Not a second, structured format -- plain timestamped lines, matching
+every wrapper script's own logging style already in this repo.
