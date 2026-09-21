@@ -66,16 +66,28 @@ the manual fix above is the one actually verified to work):
 pip install -e <path to your pyHCA clone> --force-reinstall --no-deps
 ```
 
-**Second known issue, from this lab's prior pyHCA integration (`htlcp`'s own
-`BROAD_PIPELINE_SETUP.md`), not independently re-confirmed against the
-current pyHCA source**: a Python `'rU'` file-open-mode compatibility
-problem. `'rU'` (universal-newlines mode) was deprecated in Python 3.11 and
-removed entirely in 3.12 -- if pyHCA's source opens any file with `'rU'`, it
-will raise a `ValueError` on the `python=3.11` env this doc's own install
-command creates. If `hcatk` fails with that error after the shebang fix
-above, this is the likely cause -- either patch the offending `open()` call
-to `'r'` in your pyHCA clone, or create the env with an older Python
-(`python=3.8`, before this became an error) as a faster workaround.
+**Second known issue -- confirmed on a real install (2026-09-21), not just
+referenced from a prior lab doc.** `pyHCA/core/ioHCA.py`'s
+`read_multifasta_it()` opens the input FASTA with `open(path, "rU")` --
+`'U'` mode was removed entirely in Python 3.11, which is exactly what this
+doc's own env creation command uses. Real error, confirmed:
+```
+ValueError: invalid mode: 'rU'
+  File ".../pyHCA/core/ioHCA.py", line 78, in read_multifasta_it
+    with open(path, "rU") as handle:
+```
+`hcatk` writes its output file's header comment *before* this call, so a
+`.hca` output file with only a header and no real content is this exact
+error, not a different problem. Fix -- confirmed safe, not a workaround:
+`'rU'` is semantically identical to plain `'r'` in Python 3 (universal
+newline handling is the text-mode default already), so this is a genuine
+correction to code written for Python 2/early 3, not a functional change:
+```
+grep -rln '"rU"' <path to your pyHCA clone>/pyHCA/ | xargs sed -i 's/"rU"/"r"/g'
+```
+(Confirmed two occurrences, both in `ioHCA.py`, on the version cloned from
+`github.com/DarkVador-HCA/pyHCA` -- check your own clone in case a
+different fork or version has more.)
 
 pyHCA is MIT-licensed, so this part is genuinely freely redistributable
 -- unlike TANGO below. **TANGO is not open** -- it's distributed under an

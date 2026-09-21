@@ -309,7 +309,21 @@ hca_cmd = [
 if args.dry_run:
     log("DRY-RUN " + " ".join(hca_cmd))
 else:
-    subprocess.run(hca_cmd, check=True, stderr=subprocess.DEVNULL)
+    # Real gap found and fixed 2026-09-21: this used to discard stderr
+    # outright (stderr=subprocess.DEVNULL). hcatk is noisy on stderr even
+    # on success (an ete3/PyQt4 import warning irrelevant to 'segment'
+    # mode, a BiopythonDeprecationWarning), which is why it was silenced
+    # in the first place -- but that also silenced every REAL error,
+    # confirmed the hard way: a real ValueError (pyHCA's 'rU' file mode,
+    # removed in Python 3.11) surfaced here only as a bare
+    # CalledProcessError with no indication of the actual cause, and had
+    # to be re-diagnosed by re-running hcatk directly outside this
+    # wrapper. Captured now instead of discarded, and printed on failure
+    # only -- stays quiet on the success path, same as before.
+    result = subprocess.run(hca_cmd, stderr=subprocess.PIPE, text=True)
+    if result.returncode != 0:
+        sys.stderr.write(result.stderr)
+        result.check_returncode()
 
 # ----------------------------------
 # Parse Global_HCA_score.
