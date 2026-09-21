@@ -117,6 +117,40 @@ def require_cmd(cmd, help_text):
         sys.exit(f"\n[ERROR] Required program '{cmd}' not found.\n{help_text}\n")
 
 
+def _check_hcatk_shebang():
+    """Documented, recurring bug (not hypothetical -- confirmed on a real
+    install): pip's shebang-rewrite step, run when installing pyHCA's
+    `hcatk` console script, can truncate the installed file's own leading
+    bytes -- the file ends up starting mid-word (e.g. 'TART LICENCE ###...'
+    instead of '#!<python>\\n### START LICENCE ###...'). `which hcatk`
+    still resolves it fine (the file exists, is executable, is on PATH),
+    but running it hands bash a Python source file with no valid shebang,
+    which then tries to interpret every line as a shell command and fails
+    with cryptic 'command not found' / syntax errors that look nothing
+    like a missing-shebang problem unless you already know to look for it.
+    Checked here once, before every run, since `which` alone can't catch
+    this and the failure otherwise reads as unrelated Python errors."""
+    path = shutil.which("hcatk")
+    if path is None:
+        return  # require_cmd("hcatk", ...) already caught and reported this
+    try:
+        with open(path, "rb") as f:
+            head = f.read(2)
+    except OSError:
+        return
+    if head != b"#!":
+        sys.exit(
+            f"\n[ERROR] 'hcatk' resolves on PATH ({path}) but its file doesn't "
+            f"start with a valid shebang line -- this is a known pip/setuptools "
+            f"bug where installing pyHCA truncates the script's own leading "
+            f"bytes during the shebang-rewrite step, not a SeqMetrics problem.\n"
+            f"Fix: open {path} and restore its first line to a real shebang "
+            f"(e.g. '#!{sys.executable}') followed by '### START LICENCE' (the "
+            f"line was cut mid-word, into '### S' + 'TART LICENCE'), or try:\n"
+            f"  pip install -e <path to your pyHCA clone> --force-reinstall --no-deps\n"
+        )
+
+
 def clean_original_id(header: str) -> str:
     """Extract the true sequence identifier from a raw FASTA header.
 
@@ -165,6 +199,7 @@ parser.add_argument("--dry-run", action="store_true", help="Print commands only"
 args = parser.parse_args()
 
 require_cmd("hcatk", "Fix:\n  conda activate hca_tango\n  pip install -e pyHCA\n")
+_check_hcatk_shebang()
 require_cmd(
     "tango",
     "Fix:\n  Download from https://tango.crg.es/\n"
