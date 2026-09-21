@@ -40,6 +40,9 @@ import shlex
 import shutil
 import subprocess
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 from pathlib import Path
 
 HERE = Path(__file__).parent
@@ -338,6 +341,94 @@ def check_module_ready(name, spec, overrides_by_module):
     return missing, resolved
 
 
+# Non-interactive version flag per binary, verified by direct test against
+# each real tool before adding it here -- not guessed. codonw is
+# deliberately absent: it has no non-interactive version flag, and probing
+# it with an unrecognized flag drops into its interactive menu
+# ("Press return or enter to continue"), which would hang a real run
+# waiting on stdin. hcatk and tango are also absent -- confirmed via a
+# timeout-guarded test that neither hangs, but neither prints anything
+# resembling a version string either (hcatk emits unrelated deprecation
+# warnings; tango just reports a normal usage error). Anything not in this
+# table returns "unknown" rather than a guessed or hung probe.
+VERSION_PROBES = {
+    "pepstats": ["-version"],
+    "perl": ["-v"],
+    "java": ["-version"],
+    "cpat": ["--version"],
+    "hmmsearch": ["-h"],
+}
+
+
+def get_tool_version(binary, resolution):
+    """Best-effort version string for a resolved binary, for the audit log.
+    15s timeout and a broad except -- a version probe must never be the
+    thing that makes a real run fail or hang."""
+    if binary not in VERSION_PROBES:
+        return "unknown"
+    try:
+        cmd = build_command(resolution, binary, VERSION_PROBES[binary])
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        combined = (result.stdout + result.stderr).strip()
+        if not combined:
+            return "unknown"
+        if binary == "hmmsearch":
+            # -h prints a multi-line banner; the version is on its own line,
+            # not necessarily the first one.
+            for line in combined.splitlines():
+                if "HMMER" in line:
+                    return line.strip("# ").strip()
+            return "unknown"
+        return combined.splitlines()[0].strip()
+    except Exception:
+        return "unknown"
+
+
+def get_localizer_commit(ref_dir):
+    """LOCALIZER has no version flag at all (it's a plain script, not a
+    versioned release on PyPI/conda) -- the git commit hash of the cloned
+    install is the actual reproducibility-relevant fact here, not a
+    made-up version string. ref_dir is the path to LOCALIZER.py itself
+    (see docs/install_localization.md); its repo root is two levels up
+    (LOCALIZER/Scripts/LOCALIZER.py -> LOCALIZER/)."""
+    repo_root = str(Path(ref_dir).parent.parent)
+    try:
+        if ref_dir.startswith("/"):
+            cmd = ["wsl.exe", "bash", "-lc",
+                   f"git -C {shlex.quote(repo_root)} rev-parse --short HEAD"]
+        else:
+            cmd = ["git", "-C", repo_root, "rev-parse", "--short", "HEAD"]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        return result.stdout.strip() or "unknown"
+    except Exception:
+        return "unknown"
+
+
+class RunLog:
+    """One append-only, plain-text log per run_features.py invocation --
+    matches this repo's own wrapper scripts' logging style (timestamped
+    lines to a .log file) rather than introducing a second, structured
+    format. Thread-safe: --jobs > 1 means multiple (module, file) tasks
+    write to this concurrently."""
+
+    def __init__(self, out_dir):
+        log_dir = out_dir / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.path = log_dir / f"run_{timestamp}.log"
+        self._lock = threading.Lock()
+        self._fh = open(self.path, "w", newline="\n")
+
+    def write(self, msg):
+        line = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n"
+        with self._lock:
+            self._fh.write(line)
+            self._fh.flush()
+
+    def close(self):
+        self._fh.close()
+
+
 def run_module(name, input_path, out_path, resolved, ref_dir=None):
     """Run one module on one input file, writing one output table. This is
     the single unit both single-file mode and batch mode call -- batch mode
@@ -609,6 +700,15 @@ def main():
                           "that one species' sequences, species taken from the filename. "
                           "For localization: the direct FILE path to LOCALIZER.py itself "
                           "(never bundled -- see docs/install_localization.md).")
+    ap.add_argument("--jobs", type=int, default=1, metavar="N",
+                     help="Run up to N (module, file) tasks concurrently -- e.g. "
+                          "batch mode across many species files for one module, or "
+                          "several modules on the same single-file input. Each task "
+                          "already writes to its own scratch dir and output path, so "
+                          "this is safe to raise. Default 1 (fully sequential, today's "
+                          "existing behavior). WSL-bridged modules each spawn a "
+                          "wsl.exe/conda session per task -- don't set this arbitrarily "
+                          "high on a machine with limited WSL headroom.")
     args = ap.parse_args()
 
     if args.batch and (args.nt or args.aa):
@@ -681,6 +781,16 @@ def main():
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
+    log = RunLog(args.out_dir)
+    log.write(f"invoked: {' '.join(sys.argv)}")
+    print(f"[run_features] logging to {log.path}", file=sys.stderr)
+
+    # Flat list of independent (module, file) tasks across every requested,
+    # ready module -- built up front so --jobs can run all of them through
+    # one worker pool, not one pool per module. Each tuple is exactly
+    # run_module()'s own argument shape plus a label for reporting.
+    tasks = []
+
     for name in requested:
         spec = MODULES[name]
 
@@ -692,32 +802,78 @@ def main():
 
         missing, resolved = check_module_ready(name, spec, overrides_by_module)
         if missing:
-            print(f"[run_features] SKIPPING '{name}' -- missing: {missing}. "
-                  f"See docs/install_{name}.md, or pass --module-env {name}=<env_or_path>.",
-                  file=sys.stderr)
+            msg = (f"SKIPPING '{name}' -- missing: {missing}. "
+                   f"See docs/install_{name}.md, or pass --module-env {name}=<env_or_path>.")
+            print(f"[run_features] {msg}", file=sys.stderr)
+            log.write(msg)
             continue
+
         if resolved:
             summary = {b: (kind if env is None else f"{kind}:{env}") for b, (kind, env) in resolved.items()}
             print(f"[run_features] '{name}' resolved: {summary}", file=sys.stderr)
+            versions = {b: get_tool_version(b, res) for b, res in resolved.items()}
+            log.write(f"'{name}' resolved: {summary} -- versions: {versions}")
+        ref = refs_by_module.get(name)
+        if ref:
+            log.write(f"'{name}' --module-ref: {ref}")
+            if name == "localization":
+                log.write(f"'{name}' LOCALIZER commit: {get_localizer_commit(ref)}")
 
         if args.batch:
             ext = EXT_FOR_INPUT[spec["input"]]
             matches = sorted(args.batch.glob(f"*{ext}"))
             if not matches:
-                print(f"[run_features] SKIPPING '{name}' -- no {ext} files in {args.batch}",
-                      file=sys.stderr)
+                msg = f"SKIPPING '{name}' -- no {ext} files in {args.batch}"
+                print(f"[run_features] {msg}", file=sys.stderr)
+                log.write(msg)
                 continue
             module_out_dir = args.out_dir / name
             module_out_dir.mkdir(parents=True, exist_ok=True)
             for input_path in matches:
                 out_path = module_out_dir / f"{input_path.stem}.tsv"
-                if run_module(name, input_path, out_path, resolved, refs_by_module.get(name)):
-                    print(f"[run_features] '{name}' on {input_path.name} -> {out_path}")
+                tasks.append((name, input_path, out_path, resolved, ref))
         else:
             input_path = args.nt if spec["input"] == "nt" else args.aa
             out_path = args.out_dir / f"{name}.tsv"
-            if run_module(name, input_path, out_path, resolved, refs_by_module.get(name)):
-                print(f"[run_features] '{name}' done -> {out_path}")
+            tasks.append((name, input_path, out_path, resolved, ref))
+
+    def _run_one(task):
+        # run_module() raises (CalledProcessError, FileNotFoundError,
+        # ValueError, ...) for most real failures rather than returning
+        # False -- fine when everything ran sequentially and one failure
+        # was meant to stop the whole invocation, but with --jobs > 1 an
+        # uncaught exception from one (module, file) task would blow up
+        # the whole batch and lose visibility into every other task still
+        # in flight, exactly when --jobs matters most (many species at
+        # once). Catch here and report as a normal failed result instead.
+        name, input_path, out_path, resolved, ref = task
+        try:
+            ok = run_module(name, input_path, out_path, resolved, ref)
+        except Exception as e:
+            return name, input_path, out_path, False, str(e)
+        return name, input_path, out_path, ok, None
+
+    if args.jobs <= 1:
+        results = (_run_one(t) for t in tasks)
+    else:
+        pool = ThreadPoolExecutor(max_workers=args.jobs)
+        futures = [pool.submit(_run_one, t) for t in tasks]
+        results = (f.result() for f in as_completed(futures))
+
+    any_failed = False
+    for name, input_path, out_path, ok, err in results:
+        if ok:
+            msg = f"'{name}' on {input_path.name} -> {out_path}"
+        else:
+            any_failed = True
+            msg = f"'{name}' on {input_path.name} FAILED: {err}" if err else \
+                  f"'{name}' on {input_path.name} FAILED -- see stderr above"
+        print(f"[run_features] {msg}", file=sys.stderr if not ok else sys.stdout)
+        log.write(msg)
+
+    log.close()
+    if any_failed:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
