@@ -34,6 +34,7 @@ docs/install_<module>.md for what each one actually needs installed.
 import argparse
 import functools
 import importlib
+import os
 import platform
 import re
 import shlex
@@ -262,37 +263,59 @@ def resolve_venv(binary, overrides_by_module, module_name):
     return ("venv", None), False
 
 
-def _conda_has_pymodule(env_name, module, via_wsl):
+def _conda_has_pymodule(env_name, module, via_wsl, extra_pythonpath=None):
     """Same idea as _conda_has_binary, but checks `python -c "import X"`
     instead of `which X` -- IUPred3 is two files a user drops on PYTHONPATH,
     not a binary. For the WSL case, if `module` needs a documented PYTHONPATH
     addition (see PYMODULE_PYTHONPATH_WSL), prepend it as an env-var-prefixed
-    shell invocation so `conda run` inherits it."""
+    shell invocation so `conda run` inherits it.
+
+    `extra_pythonpath` is a SEPARATE, purely opt-in mechanism for the native
+    (non-WSL) case -- --module-pythonpath on the CLI. Added because the
+    native 'conda' branch here previously had NO PYTHONPATH handling at
+    all, unlike wsl_conda's hardcoded PYMODULE_PYTHONPATH_WSL -- a real gap
+    for any native-Linux install (e.g. a workstation) that installs a
+    pymodule's engine files to an arbitrary directory instead of straight
+    into that env's own site-packages (which needs no PYTHONPATH at all,
+    and is why this stayed unnoticed until checked directly). Only takes
+    effect when the flag is actually passed -- default behavior for every
+    existing native install is unchanged."""
     if not _conda_available(via_wsl):
         return False
-    pythonpath = PYMODULE_PYTHONPATH_WSL.get(module)
     if via_wsl:
+        pythonpath = PYMODULE_PYTHONPATH_WSL.get(module)
         prefix = f"PYTHONPATH={pythonpath} " if pythonpath else ""
         cmd = ["wsl.exe", "bash", "-lc",
                f'{_WSL_CONDA_INIT}; {prefix}conda run -n {env_name} python -c "import {module}"']
+        env = None
     else:
         cmd = ["conda", "run", "-n", env_name, "python", "-c", f"import {module}"]
+        env = None
+        if extra_pythonpath:
+            env = os.environ.copy()
+            env["PYTHONPATH"] = extra_pythonpath + os.pathsep + env.get("PYTHONPATH", "")
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, env=env)
         return result.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
 
 
-def resolve_pymodule(module, overrides_by_module, module_name):
+def resolve_pymodule(module, overrides_by_module, module_name, pythonpath_by_module=None):
     """Same shape/order as resolve_binary(), for an importable python module
     instead of a PATH binary: --module-env override (conda env name only --
     a path override for a pymodule isn't supported yet, unlike resolve_binary)
     -> already importable in this interpreter -> the documented default conda
-    env, native then (Windows only) WSL-bridged."""
+    env, native then (Windows only) WSL-bridged.
+
+    `pythonpath_by_module` is --module-pythonpath's MODULE=PATH mapping,
+    applied only to the native 'conda' checks -- see _conda_has_pymodule's
+    own docstring for why this exists as a separate, opt-in mechanism from
+    PYMODULE_PYTHONPATH_WSL."""
+    extra_pythonpath = (pythonpath_by_module or {}).get(module_name)
     override = overrides_by_module.get(module_name)
     if override and "/" not in override and "\\" not in override:
-        if _conda_has_pymodule(override, module, False):
+        if _conda_has_pymodule(override, module, False, extra_pythonpath):
             return ("conda", override), True
         if platform.system() == "Windows" and _conda_has_pymodule(override, module, True):
             return ("wsl_conda", override), True
@@ -305,7 +328,7 @@ def resolve_pymodule(module, overrides_by_module, module_name):
 
     default_env = DEFAULT_CONDA_ENVS.get(module)
     if default_env:
-        if _conda_has_pymodule(default_env, module, False):
+        if _conda_has_pymodule(default_env, module, False, extra_pythonpath):
             return ("conda", default_env), True
         if platform.system() == "Windows" and _conda_has_pymodule(default_env, module, True):
             return ("wsl_conda", default_env), True
@@ -313,7 +336,7 @@ def resolve_pymodule(module, overrides_by_module, module_name):
     return ("direct", None), False
 
 
-def check_module_ready(name, spec, overrides_by_module):
+def check_module_ready(name, spec, overrides_by_module, pythonpath_by_module=None):
     """Returns (missing: list[str], resolved: dict[binary, (kind, env_name)]) --
     pass an entry from `resolved` to build_command() to get the real argv."""
     missing = []
@@ -326,7 +349,7 @@ def check_module_ready(name, spec, overrides_by_module):
             missing.append(b)
     pymodule = PYMODULE_REQUIRES.get(name)
     if pymodule:
-        resolution, found = resolve_pymodule(pymodule, overrides_by_module, name)
+        resolution, found = resolve_pymodule(pymodule, overrides_by_module, name, pythonpath_by_module)
         if found:
             resolved[pymodule] = resolution
         else:
@@ -429,7 +452,7 @@ class RunLog:
         self._fh.close()
 
 
-def run_module(name, input_path, out_path, resolved, ref_dir=None):
+def run_module(name, input_path, out_path, resolved, ref_dir=None, pythonpath_by_module=None):
     """Run one module on one input file, writing one output table. This is
     the single unit both single-file mode and batch mode call -- batch mode
     is just this function in a loop, not a separate code path. `resolved`
@@ -440,7 +463,9 @@ def run_module(name, input_path, out_path, resolved, ref_dir=None):
     Python with nothing external to resolve. `ref_dir` is only meaningful
     for modules that score against a pre-built per-species reference
     (codon_usage's cai.coa/fop.coa/cbi.coa) rather than running the tool
-    cold -- see --module-ref."""
+    cold -- see --module-ref. `pythonpath_by_module` is --module-pythonpath's
+    MODULE=PATH mapping -- only 'disorder' consults it, and only for the
+    native 'conda' resolution kind; see _conda_has_pymodule's docstring."""
     if name == "basic":
         subprocess.run([sys.executable, str(HERE / "modules/basic/compute_basic_features.py"),
                          str(input_path), "--out", str(out_path)], check=True)
@@ -454,11 +479,16 @@ def run_module(name, input_path, out_path, resolved, ref_dir=None):
         # no scratch-dir relocation needed, unlike composition/aggregation.
         script = HERE / "modules/disorder/batch_iupred_features_cysexcl.py"
         kind, env_name = resolved.get("iupred3_lib", ("direct", None))
+        env = None
         if kind == "direct":
             cmd = [sys.executable, str(script), "-i", str(input_path), "-o", str(out_path), "-f"]
         elif kind == "conda":
             cmd = ["conda", "run", "-n", env_name, "python", str(script),
                    "-i", str(input_path), "-o", str(out_path), "-f"]
+            extra_pythonpath = (pythonpath_by_module or {}).get("disorder")
+            if extra_pythonpath:
+                env = os.environ.copy()
+                env["PYTHONPATH"] = extra_pythonpath + os.pathsep + env.get("PYTHONPATH", "")
         elif kind == "wsl_conda":
             pythonpath = PYMODULE_PYTHONPATH_WSL.get("iupred3_lib", "")
             wsl_args = [_win_to_wsl_path(str(a)) for a in (script, "-i", input_path, "-o", out_path)]
@@ -467,7 +497,7 @@ def run_module(name, input_path, out_path, resolved, ref_dir=None):
                    f"{_WSL_CONDA_INIT}; PYTHONPATH={pythonpath} conda run -n {env_name} python {arg_str}"]
         else:
             raise ValueError(f"unknown resolution kind: {kind}")
-        subprocess.run(cmd, check=True)
+        subprocess.run(cmd, check=True, env=env)
 
     elif name == "composition":
         # pepstats-flow writes to <outdir>/tables/<input_stem>.tsv, not a path
@@ -746,6 +776,13 @@ def main():
                           "that one species' sequences, species taken from the filename. "
                           "For localization: the direct FILE path to LOCALIZER.py itself "
                           "(never bundled -- see docs/install_localization.md).")
+    ap.add_argument("--module-pythonpath", action="append", default=[], metavar="MODULE=PATH",
+                     help="Extra PYTHONPATH entry for a module resolved via native "
+                          "`conda run` (not WSL-bridged), needed only if that module's "
+                          "engine files were NOT installed straight into the env's own "
+                          "site-packages -- see docs/install_disorder.md. Currently only "
+                          "consulted by 'disorder'. Repeatable, e.g. "
+                          "--module-pythonpath disorder=/path/to/iupred3")
     ap.add_argument("--jobs", type=int, default=1, metavar="N",
                      help="Run up to N (module, file) tasks concurrently -- e.g. "
                           "batch mode across many species files for one module, or "
@@ -814,6 +851,16 @@ def main():
         else:
             refs_by_module[mod] = str(Path(val).resolve())
 
+    pythonpath_by_module = {}
+    for entry in args.module_pythonpath:
+        if "=" not in entry:
+            sys.exit(f"--module-pythonpath expects MODULE=PATH, got: {entry!r}")
+        mod, val = entry.split("=", 1)
+        # Same absolute-path handling as --module-ref above, same reason --
+        # this only ever feeds the native 'conda' dispatch branch, but stays
+        # defensive against the same POSIX-path-mangling class of bug.
+        pythonpath_by_module[mod] = val if val.startswith("/") else str(Path(val).resolve())
+
     requested = args.modules.split(",")
     unknown = [m for m in requested if m not in MODULES]
     if unknown:
@@ -824,6 +871,9 @@ def main():
     unknown_refs = [m for m in refs_by_module if m not in MODULES]
     if unknown_refs:
         sys.exit(f"--module-ref given for unknown module(s): {unknown_refs}")
+    unknown_pythonpaths = [m for m in pythonpath_by_module if m not in MODULES]
+    if unknown_pythonpaths:
+        sys.exit(f"--module-pythonpath given for unknown module(s): {unknown_pythonpaths}")
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -846,7 +896,7 @@ def main():
             if spec["input"] == "aa" and not args.aa:
                 sys.exit(f"Module '{name}' needs --aa (protein FASTA)")
 
-        missing, resolved = check_module_ready(name, spec, overrides_by_module)
+        missing, resolved = check_module_ready(name, spec, overrides_by_module, pythonpath_by_module)
         if missing:
             msg = (f"SKIPPING '{name}' -- missing: {missing}. "
                    f"See docs/install_{name}.md, or pass --module-env {name}=<env_or_path>.")
@@ -900,7 +950,7 @@ def main():
         # once). Catch here and report as a normal failed result instead.
         name, input_path, out_path, resolved, ref = task
         try:
-            ok = run_module(name, input_path, out_path, resolved, ref)
+            ok = run_module(name, input_path, out_path, resolved, ref, pythonpath_by_module)
         except Exception as e:
             return name, input_path, out_path, False, str(e)
         return name, input_path, out_path, ok, None
