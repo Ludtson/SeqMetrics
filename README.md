@@ -46,6 +46,29 @@ Two ways to run modules against that FASTA -- see Usage below:
   directory, protein modules only at `*.faa` -- one directory can hold
   both kinds at once without conflict.
 
+The two modes treat file extensions completely differently -- confirmed
+directly against the code, not assumed, since this has been a real source
+of confusion:
+
+```mermaid
+flowchart TD
+    A["Your FASTA files"] --> B{"One combined file,<br/>or many per-species/per-locus files?"}
+
+    B -->|"One file"| C["Single-file mode<br/>--nt/--aa &lt;path&gt;"]
+    C --> D["Extension is IGNORED.<br/>argparse takes the path as-is --<br/>my_data.fasta works with no changes."]
+
+    B -->|"Many files"| E["Batch mode<br/>--batch &lt;dir&gt;"]
+    E --> F{"Are files already named<br/>*.fna (nucleotide) / *.faa (protein)?"}
+
+    F -->|"Yes"| G["Runs as-is"]
+    F -->|"No, e.g. *.fasta / *.fa"| H["Glob finds NOTHING.<br/>Module is silently SKIPPED --<br/>no error, just 'no .fna/.faa files in dir'"]
+    H --> I["Fix: rename or symlink to match,<br/>e.g. ln -s sample.fasta sample.fna<br/>(content is never inspected --<br/>only the extension decides what a module sees)"]
+```
+
+No species name, filename convention, or file content is ever inspected
+to decide "nucleotide vs. protein" -- purely the literal `.fna`/`.faa`
+suffix, checked only in batch mode.
+
 ## Modules
 
 All eight modules below are wired and tested against real data.
