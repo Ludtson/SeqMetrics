@@ -122,8 +122,12 @@ def _check_hcatk_shebang():
     install): pip's shebang-rewrite step, run when installing pyHCA's
     `hcatk` console script, can truncate the installed file's own leading
     bytes -- the file ends up starting mid-word (e.g. 'TART LICENCE ###...'
-    instead of '#!<python>\\n### START LICENCE ###...'). `which hcatk`
-    still resolves it fine (the file exists, is executable, is on PATH),
+    instead of the real
+    '#!/usr/bin/env python3\\n\\n# START LICENCE ###...'). Verified against
+    a real working install, not reconstructed -- the missing prefix is
+    '#!/usr/bin/env python3' + a blank line + '# S' (single '#', not
+    triple). `which hcatk` still resolves it fine (the file exists, is
+    executable, is on PATH),
     but running it hands bash a Python source file with no valid shebang,
     which then tries to interpret every line as a shell command and fails
     with cryptic 'command not found' / syntax errors that look nothing
@@ -144,9 +148,10 @@ def _check_hcatk_shebang():
             f"start with a valid shebang line -- this is a known pip/setuptools "
             f"bug where installing pyHCA truncates the script's own leading "
             f"bytes during the shebang-rewrite step, not a SeqMetrics problem.\n"
-            f"Fix: open {path} and restore its first line to a real shebang "
-            f"(e.g. '#!{sys.executable}') followed by '### START LICENCE' (the "
-            f"line was cut mid-word, into '### S' + 'TART LICENCE'), or try:\n"
+            f"Fix (verified against a real working install):\n"
+            f"  {{ printf '#!/usr/bin/env python3\\n\\n# S'; cat {path}; }} > /tmp/hcatk_fixed\n"
+            f"  mv /tmp/hcatk_fixed {path} && chmod +x {path}\n"
+            f"Or try:\n"
             f"  pip install -e <path to your pyHCA clone> --force-reinstall --no-deps\n"
         )
 

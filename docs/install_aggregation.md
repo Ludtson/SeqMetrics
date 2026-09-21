@@ -19,11 +19,12 @@ which hcatk   # confirms the console-script entry point pyHCA's setup.py defines
 is not enough.** pip's shebang-rewrite step (it rewrites the installed
 script's first line to point at the target interpreter) can truncate the
 file's own leading bytes in the process -- the installed `hcatk` ends up
-starting mid-word, e.g. `TART LICENCE ###...` instead of
-`#!<python>\n### START LICENCE ###...`. `which` still finds it (the file
-exists, is executable, is on PATH), but running it hands bash a Python
-source file with no valid shebang, which tries to interpret every line as
-a shell command:
+starting mid-word, e.g. `TART LICENCE ###...` instead of the real
+`#!/usr/bin/env python3\n\n# START LICENCE ###...` (shebang, a blank line,
+then a single-`#` comment -- verified against a real working install, not
+guessed). `which` still finds it (the file exists, is executable, is on
+PATH), but running it hands bash a Python source file with no valid
+shebang, which tries to interpret every line as a shell command:
 ```
 hcatk: line 1: TART: command not found
 hcatk: line 32: syntax error near unexpected token `('
@@ -31,10 +32,16 @@ hcatk: line 32: syntax error near unexpected token `('
 This reads like an unrelated Python/shell problem unless you already know
 to check the shebang. `run_hca_tango.py` now checks this itself before
 every run (`_check_hcatk_shebang()` reads the file's first 2 bytes) rather
-than relying on `which` alone. Fix: open the installed `hcatk` (path from
-`which hcatk`) and restore its first line to a real shebang followed by
-`### START LICENCE` (the line was cut mid-word, into `### S` + `TART
-LICENCE`), or reinstall so pip regenerates it cleanly:
+than relying on `which` alone. Fix, verified against a real working
+install:
+```
+HCATK=$(which hcatk)
+{ printf '#!/usr/bin/env python3\n\n# S'; cat "$HCATK"; } > /tmp/hcatk_fixed
+mv /tmp/hcatk_fixed "$HCATK" && chmod +x "$HCATK"
+```
+Or reinstall so pip regenerates it cleanly (not confirmed to actually avoid
+the bug, since the bug is in pip's own rewrite step, not the source file --
+the manual fix above is the one actually verified to work):
 ```
 pip install -e <path to your pyHCA clone> --force-reinstall --no-deps
 ```
