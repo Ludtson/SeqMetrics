@@ -69,6 +69,11 @@ No species name, filename convention, or file content is ever inspected
 to decide "nucleotide vs. protein" -- purely the literal `.fna`/`.faa`
 suffix, checked only in batch mode.
 
+Illustrated versions of this same file-matching logic, and of how a module
+invocation resolves to an actual command (`docs/assets/seqmetrics_overview.html`),
+are in [`docs/assets/`](docs/assets/) if the flowchart above isn't enough on
+its own.
+
 ## Modules
 
 All eight modules below are wired and tested against real data.
@@ -165,3 +170,16 @@ resolved module's environment and a best-effort tool version, every
 `--module-ref` path actually used, and a result line per `(module, file)`
 task. Not a second, structured format -- plain timestamped lines, matching
 every wrapper script's own logging style already in this repo.
+
+### Zero-length sequence guard
+
+Before dispatch, every protein-input module's `.faa` source is checked for
+zero-length records (a real case, not hypothetical: a premature-stop
+translation landing at amino acid 0 -- confirmed at 2.6% and 0.5% rates in
+two real trims of one project's own upstream data). Zero-length records are
+filtered into a cached copy under `<out_dir>/_filtered_aa/` before any
+protein-input module runs against that file, and every skip is logged (both
+to stderr and the audit log above) -- an empty sequence handed to an
+external tool risks a hard crash or a degenerate score, not a clean skip, so
+this is enforced uniformly rather than trusting each wrapped tool's own
+behavior on empty input. Nucleotide-input modules are unaffected.

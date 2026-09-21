@@ -1,0 +1,352 @@
+<title>SeqMetrics Architecture</title>
+<style>
+  :root {
+    --bg: #f7f5f0;
+    --surface: #ffffff;
+    --ink: #1f2a24;
+    --ink-soft: #5b6a60;
+    --accent: #2f6f5e;
+    --accent-soft: #e4efe9;
+    --nt: #3d6fa8;
+    --nt-soft: #e6edf6;
+    --aa: #b0562e;
+    --aa-soft: #f7e9e0;
+    --line: #dcd6c8;
+    --mono-chip: #eef0e6;
+    --gated: #a8710a;
+    --gated-soft: #faf0dd;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #141815;
+      --surface: #1c211d;
+      --ink: #eae6db;
+      --ink-soft: #9aa79d;
+      --accent: #6ec9a8;
+      --accent-soft: #1f2f28;
+      --nt: #7fb0e6;
+      --nt-soft: #1c2733;
+      --aa: #e19464;
+      --aa-soft: #33241a;
+      --line: #333a34;
+      --mono-chip: #232922;
+      --gated: #e2b04b;
+      --gated-soft: #2f2712;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #141815; --surface: #1c211d; --ink: #eae6db; --ink-soft: #9aa79d;
+    --accent: #6ec9a8; --accent-soft: #1f2f28; --nt: #7fb0e6; --nt-soft: #1c2733;
+    --aa: #e19464; --aa-soft: #33241a; --line: #333a34; --mono-chip: #232922;
+    --gated: #e2b04b; --gated-soft: #2f2712;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", system-ui, sans-serif;
+    padding: clamp(20px, 4vw, 48px) 16px;
+    padding-block: clamp(20px, 4vw, 48px);
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+
+  h1 {
+    font-family: "Fraunces", Georgia, serif;
+    font-weight: 600;
+    font-size: clamp(28px, 4vw, 40px);
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+    margin: 0 0 6px;
+  }
+  .kicker {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 12px;
+  }
+  .intro {
+    color: var(--ink-soft);
+    font-size: 15.5px;
+    line-height: 1.6;
+    max-width: 66ch;
+    margin: 0 0 30px;
+  }
+  code {
+    font-family: "IBM Plex Mono", monospace;
+    background: var(--mono-chip);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 0.9em;
+  }
+
+  /* ---- Input row ---- */
+  .inputs {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+  }
+  .input-pill {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    border-radius: 999px;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 13px;
+    font-weight: 500;
+    border: 1px solid var(--line);
+  }
+  .input-pill.nt { background: var(--nt-soft); color: var(--nt); border-color: var(--nt); }
+  .input-pill.aa { background: var(--aa-soft); color: var(--aa); border-color: var(--aa); }
+
+  .spine {
+    width: 2px;
+    height: 30px;
+    background: var(--line);
+    margin: 0 auto;
+  }
+
+  /* ---- Orchestrator hub ---- */
+  .hub {
+    background: var(--surface);
+    border: 1.5px solid var(--accent);
+    border-radius: 14px;
+    padding: 18px 22px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    max-width: 560px;
+    margin: 0 auto 6px;
+  }
+  .hub-icon { flex: none; }
+  .hub-title {
+    font-family: "Fraunces", Georgia, serif;
+    font-weight: 600;
+    font-size: 18px;
+  }
+  .hub-sub {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    color: var(--ink-soft);
+    margin-top: 2px;
+  }
+
+  .fanout {
+    position: relative;
+    height: 26px;
+    margin: 0 auto 4px;
+    max-width: 1000px;
+  }
+
+  /* ---- Module grid ---- */
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+  }
+  @media (max-width: 900px) { .grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 480px) { .grid { grid-template-columns: 1fr; } }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    position: relative;
+  }
+  .card-drop {
+    width: 1px;
+    height: 10px;
+    background: var(--line);
+    margin: 0 auto;
+  }
+  .card-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 6px;
+  }
+  .card-name {
+    font-family: "Fraunces", Georgia, serif;
+    font-weight: 600;
+    font-size: 15px;
+  }
+  .card-io {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 10.5px;
+    padding: 2px 6px;
+    border-radius: 5px;
+    white-space: nowrap;
+  }
+  .card-io.nt { background: var(--nt-soft); color: var(--nt); }
+  .card-io.aa { background: var(--aa-soft); color: var(--aa); }
+  .card-tool {
+    font-size: 12.5px;
+    color: var(--ink-soft);
+    line-height: 1.4;
+  }
+  .card-env {
+    margin-top: auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 10.5px;
+    color: var(--ink-soft);
+    border-top: 1px dashed var(--line);
+    padding-top: 8px;
+  }
+  .card.gated .card-env { color: var(--gated); }
+  .gated-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--gated); flex: none;
+  }
+
+  .legend {
+    margin-top: 30px;
+    display: flex;
+    gap: 22px;
+    flex-wrap: wrap;
+    font-size: 12.5px;
+    color: var(--ink-soft);
+  }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend .dot { width: 8px; height: 8px; border-radius: 50%; }
+
+  .footnote {
+    margin-top: 22px;
+    font-size: 13px;
+    color: var(--ink-soft);
+    line-height: 1.6;
+    max-width: 70ch;
+  }
+</style>
+
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+
+<div class="wrap">
+  <p class="kicker">SeqMetrics &middot; architecture</p>
+  <h1>One orchestrator, eight independent modules</h1>
+  <p class="intro">
+    Every module reads a plain CDS or protein FASTA and writes one TSV.
+    <code>run_features.py</code> only checks the dependencies a
+    <em>requested</em> module actually needs, resolving each one through
+    whichever of a direct PATH binary, native conda, WSL-bridged conda, or
+    an isolated venv it was actually set up in &mdash; nobody installs the
+    whole panel to run one module.
+  </p>
+
+  <div class="inputs">
+    <div class="input-pill nt">
+      <svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" stroke-width="1.6"/><text x="8" y="11" text-anchor="middle" font-size="8" font-weight="600" fill="currentColor">nt</text></svg>
+      CDS FASTA &middot; <code>.fna</code>
+    </div>
+    <div class="input-pill aa">
+      <svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" stroke-width="1.6"/><text x="8" y="11" text-anchor="middle" font-size="8" font-weight="600" fill="currentColor">aa</text></svg>
+      Protein FASTA &middot; <code>.faa</code>
+    </div>
+  </div>
+
+  <div class="spine"></div>
+
+  <div class="hub">
+    <svg class="hub-icon" width="34" height="34" viewBox="0 0 34 34">
+      <rect x="1" y="1" width="32" height="32" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.6"/>
+      <circle cx="17" cy="17" r="3.2" fill="var(--accent)"/>
+      <line x1="17" y1="7" x2="17" y2="12.5" stroke="var(--accent)" stroke-width="1.6"/>
+      <line x1="17" y1="21.5" x2="17" y2="27" stroke="var(--accent)" stroke-width="1.6"/>
+      <line x1="7" y1="17" x2="12.5" y2="17" stroke="var(--accent)" stroke-width="1.6"/>
+      <line x1="21.5" y1="17" x2="27" y2="17" stroke="var(--accent)" stroke-width="1.6"/>
+      <circle cx="17" cy="7" r="1.6" fill="var(--accent)"/>
+      <circle cx="17" cy="27" r="1.6" fill="var(--accent)"/>
+      <circle cx="7" cy="17" r="1.6" fill="var(--accent)"/>
+      <circle cx="27" cy="17" r="1.6" fill="var(--accent)"/>
+    </svg>
+    <div>
+      <div class="hub-title">run_features.py</div>
+      <div class="hub-sub">resolves direct / conda / wsl_conda / venv &middot; --modules, --batch, --jobs</div>
+    </div>
+  </div>
+
+  <div class="spine"></div>
+
+  <div class="grid">
+
+    <div class="card">
+      <div class="card-top"><span class="card-name">basic</span><span class="card-io nt">nt</span></div>
+      <div class="card-tool">pure Python &middot; length, GC%</div>
+      <div class="card-env">no external tool</div>
+    </div>
+
+    <div class="card">
+      <div class="card-top"><span class="card-name">tail_hydro&shy;phobicity</span><span class="card-io aa">aa</span></div>
+      <div class="card-tool">CTTH &middot; C-terminal tail descriptors</div>
+      <div class="card-env">no external tool</div>
+    </div>
+
+    <div class="card">
+      <div class="card-top"><span class="card-name">composition</span><span class="card-io aa">aa</span></div>
+      <div class="card-tool">EMBOSS PEPSTATS</div>
+      <div class="card-env">conda &middot; em_boss</div>
+    </div>
+
+    <div class="card">
+      <div class="card-top"><span class="card-name">aggregation</span><span class="card-io aa">aa</span></div>
+      <div class="card-tool">HCA + TANGO</div>
+      <div class="card-env">conda &middot; hca_tango</div>
+    </div>
+
+    <div class="card gated">
+      <div class="card-top"><span class="card-name">disorder</span><span class="card-io aa">aa</span></div>
+      <div class="card-tool">IUPred3 + ANCHOR2, Cys-excluded</div>
+      <div class="card-env"><span class="gated-dot"></span>conda &middot; iupred3 (license-gated)</div>
+    </div>
+
+    <div class="card">
+      <div class="card-top"><span class="card-name">codon_usage</span><span class="card-io nt">nt</span></div>
+      <div class="card-tool">codonW &middot; scores against a pre-built per-species reference</div>
+      <div class="card-env">conda &middot; codon_w</div>
+    </div>
+
+    <div class="card">
+      <div class="card-top"><span class="card-name">coding_&shy;potential</span><span class="card-io nt">nt</span></div>
+      <div class="card-tool">CPAT &middot; scores against a pre-built hexamer/logit model</div>
+      <div class="card-env">conda &middot; cpat</div>
+    </div>
+
+    <div class="card">
+      <div class="card-top"><span class="card-name">tm_domain</span><span class="card-io aa">aa</span></div>
+      <div class="card-tool">DeepTMHMM2 &middot; CPU, ungated reimplementation</div>
+      <div class="card-env">isolated venv, not conda</div>
+    </div>
+
+    <div class="card gated">
+      <div class="card-top"><span class="card-name">localization</span><span class="card-io aa">aa</span></div>
+      <div class="card-tool">LOCALIZER &middot; plant-specific</div>
+      <div class="card-env"><span class="gated-dot"></span>conda &middot; em_boss + Java + Perl</div>
+    </div>
+
+  </div>
+
+  <div class="legend">
+    <span><span class="dot" style="background:var(--nt)"></span>nucleotide (.fna) input</span>
+    <span><span class="dot" style="background:var(--aa)"></span>protein (.faa) input</span>
+    <span><span class="dot" style="background:var(--gated)"></span>third-party tool needs its own license/registration &mdash; never bundled</span>
+  </div>
+
+  <p class="footnote">
+    Every module writes its own output table &mdash; nothing is bundled that
+    the module's own install doc doesn't say to obtain yourself.
+    <code>codon_usage</code> and <code>coding_potential</code> additionally
+    need a pre-built per-species reference (<code>--module-ref</code>),
+    built upstream in a separate calibration step, not by SeqMetrics itself.
+  </p>
+</div>

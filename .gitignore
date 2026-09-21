@@ -13,3 +13,4 @@ test_sample/gt_check/
 test_sample/csv_test_base.csv
 test_sample/merged_test*.tsv
 test_sample/csv_merge_test.tsv
+test_sample/zero_len_out/

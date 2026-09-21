@@ -676,6 +676,52 @@ def run_module(name, input_path, out_path, resolved, ref_dir=None):
 EXT_FOR_INPUT = {"nt": ".fna", "aa": ".faa"}
 
 
+def _filter_zero_length(src_path, filtered_dir, log):
+    """Every protein-input module gets this applied to its input before
+    dispatch -- a real, confirmed edge case in this project's own Stage 4
+    output (a premature-stop translation landing at amino acid 0 -- 447
+    sequences in one real trim, 10 in another): an empty sequence handed to
+    an external tool (pepstats, hcatk/tango, DeepTMHMM2, LOCALIZER) risks a
+    hard crash or a degenerate score, not a clean skip, and this project's
+    own working plan says explicitly these must be skipped, not scored.
+    `disorder` already filters <30 residues internally (its own threshold,
+    unrelated to this fix); the other four modules were untested for this
+    case, so this is applied uniformly rather than trusting each one's own
+    behavior individually. Cached per source file (by content hash) so the
+    same batch file isn't re-filtered once per module that needs it."""
+    filtered_dir.mkdir(parents=True, exist_ok=True)
+    dest_path = filtered_dir / src_path.name
+    if dest_path.exists():
+        return dest_path
+
+    kept, skipped = [], []
+    name, seq = None, []
+    with open(src_path) as f:
+        for line in f:
+            if line.startswith(">"):
+                if name is not None:
+                    (kept if seq else skipped).append((name, "".join(seq)))
+                name, seq = line[1:].strip(), []
+            else:
+                seq.append(line.strip())
+        if name is not None:
+            (kept if seq else skipped).append((name, "".join(seq)))
+
+    with open(dest_path, "w", newline="\n") as out:
+        for seq_id, seq in kept:
+            out.write(f">{seq_id}\n{seq}\n")
+
+    if skipped:
+        skipped_ids = ", ".join(sid for sid, _ in skipped[:10])
+        more = f" (+{len(skipped) - 10} more)" if len(skipped) > 10 else ""
+        msg = (f"'{src_path.name}': skipped {len(skipped)} zero-length sequence(s) "
+               f"before protein-input modules: {skipped_ids}{more}")
+        print(f"[run_features] {msg}", file=sys.stderr)
+        log.write(msg)
+
+    return dest_path
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--modules", required=True, help="Comma-separated module names")
@@ -819,6 +865,8 @@ def main():
             if name == "localization":
                 log.write(f"'{name}' LOCALIZER commit: {get_localizer_commit(ref)}")
 
+        filtered_dir = args.out_dir / "_filtered_aa"
+
         if args.batch:
             ext = EXT_FOR_INPUT[spec["input"]]
             matches = sorted(args.batch.glob(f"*{ext}"))
@@ -830,12 +878,16 @@ def main():
             module_out_dir = args.out_dir / name
             module_out_dir.mkdir(parents=True, exist_ok=True)
             for input_path in matches:
+                real_input = (_filter_zero_length(input_path, filtered_dir, log)
+                              if spec["input"] == "aa" else input_path)
                 out_path = module_out_dir / f"{input_path.stem}.tsv"
-                tasks.append((name, input_path, out_path, resolved, ref))
+                tasks.append((name, real_input, out_path, resolved, ref))
         else:
             input_path = args.nt if spec["input"] == "nt" else args.aa
+            real_input = (_filter_zero_length(input_path, filtered_dir, log)
+                          if spec["input"] == "aa" else input_path)
             out_path = args.out_dir / f"{name}.tsv"
-            tasks.append((name, input_path, out_path, resolved, ref))
+            tasks.append((name, real_input, out_path, resolved, ref))
 
     def _run_one(task):
         # run_module() raises (CalledProcessError, FileNotFoundError,
