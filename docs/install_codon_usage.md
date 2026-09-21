@@ -41,6 +41,18 @@ so nobody is ever fully blocked:
    module -- ~30 accessions across ribosomal proteins, elongation
    factors, GAPDH, enolase, and HSP70/chaperonins, each accession
    verified live against the InterPro API, not recalled from memory).
+
+   **Needs HMMER first** (`hmmsearch`/`hmmfetch`/`hmmpress`) -- easy to
+   miss since it's a separate dependency from codonW above, not bundled
+   with anything else this module needs:
+   ```
+   conda create -n hmmer -c bioconda hmmer
+   conda activate hmmer
+   which hmmsearch hmmfetch hmmpress   # confirm all three resolve
+   ```
+   Confirmed working on a real install (2026-09-21): HMMER 3.4, all three
+   binaries resolved cleanly under the conda env name `hmmer`.
+
    Annotation-independent -- works even when a species' GFF3 is sparse
    or full of "hypothetical protein" placeholders, since it finds the
    conserved domain itself rather than trusting someone else's label for
@@ -55,23 +67,31 @@ so nobody is ever fully blocked:
    Pfam's own current documentation, not assumed), so redistributing
    even a full local copy would be fine, but there's no reason to ship
    the ~1.5GB+ full database when ~30 profiles are all this needs. Build
-   the small subset yourself, once (not per-species):
+   the small subset yourself, once (not per-species). There's no way to
+   download just those ~30 profiles directly -- `hmmfetch` only extracts
+   from an already-downloaded, `hmmpress`-indexed full database, so
+   getting the full copy locally first is unavoidable. It's only needed
+   temporarily, though: download it to a scratch location, extract the
+   subset, then delete the full database and its index files -- only
+   `heg_accessions.txt`/`heg_markers.hmm` (a few KB) need to stick around:
    ```
+   cd /tmp/pfam_scratch   # or wherever -- doesn't need to be kept
    wget https://ftp.ebi.ac.uk/pub/databases/Pfam/current_release/Pfam-A.hmm.gz
    gunzip Pfam-A.hmm.gz
    hmmpress Pfam-A.hmm
    cut -f1 heg_pfam_accessions.tsv | tail -n +2 > heg_accessions.txt
    hmmfetch -f Pfam-A.hmm heg_accessions.txt > heg_markers.hmm
+   # move heg_accessions.txt and heg_markers.hmm wherever you keep real
+   # references, then discard this scratch directory entirely
    ```
    Then per species:
    ```
    python extract_heg_ids_hmm.py --protein-fasta species.faa \
        --hmm-profile heg_markers.hmm --species Athaliana --out-dir OUT
    ```
-   Needs `hmmsearch`/`hmmfetch`/`hmmpress` (HMMER, bioconda: `conda
-   create -n hmmer -c bioconda hmmer`) and a protein FASTA whose headers
-   match the species' CDS FASTA headers exactly (the standard case when
-   both come from the same genome annotation).
+   Needs a protein FASTA whose headers match the species' CDS FASTA
+   headers exactly (the standard case when both come from the same
+   genome annotation).
 
    (An orthology-projection method via OrthoFinder's `N0.tsv` was
    considered and dropped -- newer OrthoFinder versions don't reliably

@@ -33,14 +33,28 @@ make_hexamer_tab -c coding_cds.fa -n noncoding.fa > hexamer.tsv
 make_logitModel -x hexamer.tsv -c coding_cds.fa -n noncoding.fa -o model
 # -> model.logit.RData
 ```
-**Real, currently-unresolved gap**: building the `noncoding.fa` input
-needs a `get_noncoding_data.py` script that the source project's own
-`cpat_orchestrator.sh` depends on (`command -v get_noncoding_data.py` is
-checked before it runs) -- but that script does not exist anywhere in
-this project's files, only the reference to it. Confirmed via a full
-search, not an oversight in copying. Until it's located or rewritten,
-Stage 1 can only be run for a species where you already have a real
-noncoding training set some other way.
+**Correction (2026-09-21): `get_noncoding_data.py` was never actually
+missing.** A prior version of this doc claimed it didn't exist anywhere
+in this project's files, "confirmed via a full search" -- that claim was
+simply wrong, not stale; the script (`modules/coding_potential/
+get_noncoding_data.py`) is real, complete, and already in this repo. It
+builds `noncoding.fa` straight from a genome + GFF3 + protein FASTA --
+exactly the inputs `codon_usage`'s HMM-HEG reference-building already
+needs, so no separate data-gathering step is required:
+```
+python get_noncoding_data.py \
+    -p protein.faa -g genome.fa -a annotation.gff3 \
+    -o out_dir -r <species_prefix>
+# -> out_dir/<protein_basename>_nc.faa
+```
+Internally: finds every non-CDS genome segment (intergenic/intronic),
+keeps only ones ≥200nt (`--min-noncoding-length`), then rejects any
+segment containing a ≥250nt ORF in any of 6 frames
+(`--min-orf-length`) or whose 6-frame translation matches a 20-mer from
+the known protein set -- two independent checks against accidentally
+including real coding sequence in the "noncoding" training set. Also
+supports `-n/--subset-cds-count` to draw a random CDS subset for the
+`coding_cds.fa` side in the same run.
 
 Three species have trained models from the source (older) project's prior
 run (Arabidopsis thaliana, Brassica rapa, Oryza sativa) --

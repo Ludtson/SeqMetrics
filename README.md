@@ -78,17 +78,17 @@ its own.
 
 All eight modules below are wired and tested against real data.
 
-| Module | Tool | Input | External dependency | Redistributable? |
-|---|---|---|---|---|
-| `basic` | -- (pure Python) | nucleotide | none | yes |
-| `tail_hydrophobicity` | CTTH | protein | none | yes |
-| `composition` | EMBOSS PEPSTATS | protein | `pepstats` binary | EMBOSS is open-source (GPL) -- installable, not bundled |
-| `aggregation` | HCA + TANGO | protein | `hcatk` + `tango` binary | pyHCA is MIT-licensed; **TANGO is proprietary/academic-license** and must be obtained directly from its authors, never bundled |
-| `disorder` | IUPred3 + ANCHOR2 | protein | `iupred3_lib.py` | **IUPred3 is academic-license** -- must be obtained via registration at the authors' site, never bundled |
-| `codon_usage` | codonW | nucleotide | `codonw` binary + a pre-built per-species reference (`--module-ref`) | codonW is open-source and free -- installable, not bundled. Reference-building (Stage 1) is a separate upstream step -- see `docs/install_codon_usage.md` |
-| `coding_potential` | CPAT | nucleotide | `CPAT` (pip) + a pre-built per-species reference (`--module-ref`) | CPAT is open-source (pip-installable). Reference-building (Stage 1: `make_hexamer_tab`+`make_logitModel`) is a separate upstream step |
-| `tm_domain` | DeepTMHMM2 | protein | isolated Python venv (not conda) | The official DTU DeepTMHMM requires registration for local use; this uses `fteufel/DeepTMHMM2`, an ungated reimplementation -- see `docs/install_tm_domain.md` |
-| `localization` | LOCALIZER | protein | `pepstats`+`perl`+`java` + the LOCALIZER script itself (`--module-ref`) | GPL-3.0, plant-specific -- must be installed from its own GitHub repo, never bundled -- see `docs/install_localization.md` |
+| Module | Tool | Input | External dependency | Redistributable? | Install doc |
+|---|---|---|---|---|---|
+| `basic` | -- (pure Python) | nucleotide | none | yes | [install_basic.md](docs/install_basic.md) |
+| `tail_hydrophobicity` | CTTH | protein | none | yes | [install_tail_hydrophobicity.md](docs/install_tail_hydrophobicity.md) |
+| `composition` | EMBOSS PEPSTATS | protein | `pepstats` binary | EMBOSS is open-source (GPL) -- installable, not bundled | [install_composition.md](docs/install_composition.md) |
+| `aggregation` | HCA + TANGO | protein | `hcatk` + `tango` binary | pyHCA is MIT-licensed; **TANGO is proprietary/academic-license** and must be obtained directly from its authors, never bundled | [install_aggregation.md](docs/install_aggregation.md) |
+| `disorder` | IUPred3 + ANCHOR2 | protein | `iupred3_lib.py` | **IUPred3 is academic-license** -- must be obtained via registration at the authors' site, never bundled | [install_disorder.md](docs/install_disorder.md) |
+| `codon_usage` | codonW | nucleotide | `codonw` binary + a pre-built per-species reference (`--module-ref`) | codonW is open-source and free -- installable, not bundled. Reference-building (Stage 1) is a separate upstream step | [install_codon_usage.md](docs/install_codon_usage.md) |
+| `coding_potential` | CPAT | nucleotide | `CPAT` (pip) + a pre-built per-species reference (`--module-ref`) | CPAT is open-source (pip-installable). Reference-building (Stage 1: `make_hexamer_tab`+`make_logitModel`) is a separate upstream step | [install_coding_potential.md](docs/install_coding_potential.md) |
+| `tm_domain` | DeepTMHMM2 | protein | isolated Python venv (not conda) | The official DTU DeepTMHMM requires registration for local use; this uses `fteufel/DeepTMHMM2`, an ungated reimplementation | [install_tm_domain.md](docs/install_tm_domain.md) |
+| `localization` | LOCALIZER | protein | `pepstats`+`perl`+`java` + the LOCALIZER script itself (`--module-ref`) | GPL-3.0, plant-specific -- must be installed from its own GitHub repo, never bundled | [install_localization.md](docs/install_localization.md) |
 
 Known gaps, not silently skipped: a **general-organism** localization
 tool (TargetP or similar, for non-plant use -- LOCALIZER is plant-only).
@@ -96,31 +96,30 @@ tool (TargetP or similar, for non-plant use -- LOCALIZER is plant-only).
 are known feature categories from the source project's historical output
 that also have no wrapper yet.
 
-**Real, unresolved biological/methodological risks, tracked here rather
-than glossed over:**
-- `codon_usage`/`coding_potential` currently only work on already-per-species
-  files -- this project's own pooled, multi-species-and-node composite
-  Stage 5 FASTAs need a species-splitting adapter (using Stage 1's
-  `gene_id -> species` table) before either module can run on them for real.
-- The historical CPAT model available for Athaliana was trained on
-  **TAIR10**-annotated CDS, while this project's own data is
-  **Araport11**-based -- confirmed the tracked locus `AT5G15843.1` isn't
-  even in the TAIR10 training set. Genes unique to Araport11 (including
-  candidate DNGs) may be underrepresented or mis-scored by that model;
-  retraining on this project's own Araport11 data is the correct fix,
-  not yet done.
+**Real, unresolved methodological risks, tracked here rather than glossed
+over:**
+- `codon_usage`/`coding_potential` need genuinely per-species input files
+  -- a pooled, multi-species FASTA needs to be split by species first
+  (using whatever ID/species mapping your own upstream pipeline already
+  has); neither module does this splitting itself.
 - `calculate_indices.sh --basis-mode auto` silently falls back to the
   statistical top-5%-Fop method when no HEG file exists for a species --
   confirmed by direct test to produce numbers that are not just noisier
   but *negatively correlated* with the biologically-grounded HEG methods.
-  As of this writing, only Athaliana has a working GFF-keyword HEG file;
-  15 of the other 22 species came back with zero HEG hits (an annotation-
-  format mismatch across sources, not real biological absence) and would
-  silently get the unreliable fallback under `auto` mode until the
-  HMM-based method (`extract_heg_ids_hmm.py`) is run for them.
+  A species with no working HEG file (whether from a real GFF3 annotation
+  gap, a keyword-matching miss, or simply not having run
+  `extract_heg_ids_hmm.py` for it yet) will silently get the unreliable
+  fallback under `auto` mode rather than an error -- use `--basis-mode
+  heg` instead if you want a hard failure when no HEG file is found,
+  rather than a silent, less-trustworthy substitution.
 
-See `docs/install_<module>.md` for exact setup per module -- only set up
-the ones you're actually going to run.
+Project-specific findings from applying SeqMetrics to a real dataset
+(e.g. a particular species' reference status, a particular annotation
+mismatch) belong in that project's own tracking, not here -- this repo
+stays about the tool, not any one dataset it's been run against.
+
+Only set up the modules you're actually going to run -- each install doc
+is self-contained.
 
 ## Usage
 
