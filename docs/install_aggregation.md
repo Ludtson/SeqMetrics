@@ -15,6 +15,17 @@ pip install -e .
 which hcatk   # confirms the console-script entry point pyHCA's setup.py defines
 ```
 
+**Biopython must be pinned, confirmed on a real install.** pyHCA's source
+imports `Bio.SubsMat.MatrixInfo`, which modern Biopython removed --
+`pip install -e .` doesn't pin a compatible version itself, so a bare
+`pip install biopython` (or whatever a fresh env resolves) leaves `hcatk`
+failing with `ModuleNotFoundError: No module named 'Bio.SubsMat'` even
+after the shebang fix below. Matches this lab's own prior pin for this
+exact env (`htlcp/BROAD_PIPELINE_SETUP.md`):
+```
+pip install "biopython==1.79"
+```
+
 **Real, recurring bug, confirmed on a real install -- `which hcatk` succeeding
 is not enough.** pip's shebang-rewrite step (it rewrites the installed
 script's first line to point at the target interpreter) can truncate the
