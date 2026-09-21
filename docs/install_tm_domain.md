@@ -22,6 +22,17 @@ python -m venv .venvs/deeptmhmm2
 .venvs/deeptmhmm2/bin/pip install git+https://github.com/fteufel/DeepTMHMM2.git        # Linux/macOS
 ```
 
+**The default install pulls the full GPU-enabled `torch` build** --
+confirmed on a real install: several GB of NVIDIA CUDA packages
+(cuBLAS, cuDNN, cuFFT, cuSOLVER, etc.) downloaded alongside `torch`
+itself, even though this tool "defaults to CPU, no GPU/Docker required"
+per its own description above. If you don't need GPU inference, install
+the CPU-only wheel first to skip that entirely:
+```
+.venvs/deeptmhmm2/bin/pip install torch --index-url https://download.pytorch.org/whl/cpu
+.venvs/deeptmhmm2/bin/pip install git+https://github.com/fteufel/DeepTMHMM2.git
+```
+
 **Do not `pip install` this into an active/system Python without a venv.**
 Confirmed the hard way this session: doing exactly that once silently
 upgraded numpy (1.24->2.4), pandas (2.3->**3.0**, a major version jump),

@@ -8,7 +8,14 @@ The `hcatk` binary comes from **pyHCA** (Bitard-Feildel & Faure,
 bornberglab.org, MIT-licensed), and this lab's own working install is an
 *editable install from a locally cloned git repo*, not a pip package:
 
+**Clone pyHCA outside this repo, not inside it.** Confirmed the hard way:
+running the clone command from inside a freshly-cloned SeqMetrics puts
+`pyHCA/` inside SeqMetrics' own working tree -- it's not gitignored, so it
+shows up as untracked clutter and a careless `git add -A` could commit a
+whole separate third-party repo into this one. Clone it as a sibling, same
+convention as this project's other third-party tools:
 ```
+cd ~/Bioinformatics   # or wherever you keep pyHCA/LOCALIZER/etc. as siblings, not inside SeqMetrics/
 git clone https://github.com/DarkVador-HCA/pyHCA.git
 cd pyHCA
 pip install -e .
@@ -77,9 +84,22 @@ Schymkowitz lab); you register and download it directly from them. This
 repo ships the wrapper script only (`run_hca_tango.py`), never the TANGO
 binary itself.
 
+Registering at tango.crg.es emails you a download link -- often wrapped
+in a mail-security redirect (e.g. URL Defense) that a bare `wget`/`curl`
+can't follow (confirmed: it silently returns the wrapper's HTML landing
+page, not the file, with no error -- check `file` on whatever you
+downloaded before trusting it). Open the link in a real browser instead,
+pick the correct architecture (e.g. "Executable Tango - Linux 64bits"),
+and `scp` the real download to your target machine. It'll be a small
+`.zip` (confirmed ~78KB, not hundreds of MB -- this is a small compiled
+binary, don't expect a large download):
 ```
-# obtain the tango binary yourself, place it on PATH
+unzip tango2_3_1.linux64.zip
+chmod +x tango_x86_64_release
+cp tango_x86_64_release "$CONDA_PREFIX/bin/tango"   # with hca_tango active
 which hcatk tango   # confirm both resolve
+tango                # no args -- should prompt interactively (Y/N, then a
+                      # filename), not crash; Ctrl-C out once confirmed
 ```
 
 This lab's existing WSL setup already has both working under the conda

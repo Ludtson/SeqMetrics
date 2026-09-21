@@ -5,14 +5,19 @@ real: `CPAT` exists on PyPI (checked directly against
 `pypi.org/pypi/CPAT/json`, not just assumed).
 
 ```
+conda create -n cpat python=3.11 -y
+conda activate cpat
 pip install CPAT
-which cpat make_hexamer_tab make_logitModel   # confirm all three resolve
+conda install -c conda-forge r-base -y
+which cpat make_hexamer_tab make_logitModel Rscript   # confirm all four resolve
 ```
 
-Also needs Rscript (R) on PATH -- CPAT's scoring step generates and runs
-a small R script internally (`predict()` against the trained logistic
-model), so `Rscript` must be installed even though you never invoke it
-directly.
+Rscript (R) is needed on PATH even though you never invoke it directly --
+CPAT's scoring step generates and runs a small R script internally
+(`predict()` against the trained logistic model). `conda install -c
+conda-forge r-base` is the confirmed-working way to get it into the same
+env, verified on a real install (2026-09-21) -- all four binaries resolved
+cleanly.
 
 This lab's existing WSL setup already has this working under the conda
 env name `cpat` (CPAT 3.0.5), confirmed on 2026-09-20.
@@ -37,12 +42,20 @@ search, not an oversight in copying. Until it's located or rewritten,
 Stage 1 can only be run for a species where you already have a real
 noncoding training set some other way.
 
-Three species already have trained models from the source project's
-prior run (Arabidopsis thaliana, Brassica rapa, Oryza sativa) --
+Three species have trained models from the source (older) project's prior
+run (Arabidopsis thaliana, Brassica rapa, Oryza sativa) --
 `2026fall-mla-chapter/feature_outputs/cpat_output/<species>/*_cpat_output/{1_hexamer,2_model}/`.
 Confirmed by direct test: SeqMetrics' scoring output using Athaliana's
 existing model reproduces the historical run's `Coding_prob`/`Fickett`/
 `Hexamer` values byte-for-byte across 25,278 overlapping genes.
+
+**Before reusing any pre-built model across projects, verify it was
+trained against the same genome annotation version your own data uses.**
+A model trained on one annotation (e.g. an older TAIR/RefSeq/Ensembl
+release) scored against a different one for the "same" species won't
+error -- it'll just silently score against mismatched gene/isoform calls.
+This is a real, easy-to-miss failure mode worth checking explicitly, not
+something SeqMetrics itself can detect or warn about automatically.
 
 **Stage 2 -- scoring, against an already-built reference.** This is
 SeqMetrics' own job (`run_features.py --modules coding_potential
