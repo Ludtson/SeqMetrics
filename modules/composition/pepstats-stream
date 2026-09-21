@@ -1,0 +1,226 @@
+#!/usr/bin/env python3
+"""
+Module Name: pepstats-stream
+Version    : 1.0.0
+Description: Advanced multi-processed alternate streaming backend. Pipes individual
+             FASTA entries directly into pepstats via standard input filters to preserve
+             long file headers and complex gene identifier definitions.
+Author     : Adekola Owoyemi
+"""
+
+import argparse
+import subprocess
+import time
+from concurrent.futures import ProcessPoolExecutor
+from pathlib import Path
+import sys
+import importlib.util
+
+# ------------------------------------------------------------------------------
+# Dynamic Import Resolver Hook
+# Purpose: Resolves Python import system limitations regarding module names 
+#          containing hyphen characters, ensuring pepstats-parse functions are imported.
+# ------------------------------------------------------------------------------
+SCRIPT_DIR = Path(__file__).resolve().parent
+PARSER_PATH = SCRIPT_DIR / "pepstats-parse"
+
+if not PARSER_PATH.exists():
+    print(f"ERROR: Dependency missing at expected location: {PARSER_PATH}", file=sys.stderr)
+    sys.exit(1)
+
+# ------------------------------------------------------------------------------
+# Dynamic Import Resolver Hook
+# Purpose: Resolves Python import system limitations regarding module names 
+#          containing hyphen characters and lacking .py extensions.
+# ------------------------------------------------------------------------------
+SCRIPT_DIR = Path(__file__).resolve().parent
+PARSER_PATH = SCRIPT_DIR / "pepstats-parse"
+
+if not PARSER_PATH.exists():
+    print(f"ERROR: Dependency missing at expected location: {PARSER_PATH}", file=sys.stderr)
+    sys.exit(1)
+
+import importlib.machinery  # <--- Make sure this is imported
+
+# Force Python to use the SourceFileLoader regardless of the missing .py extension
+loader = importlib.machinery.SourceFileLoader("pepstats_parse", str(PARSER_PATH))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+pepstats_parse = importlib.util.module_from_spec(spec)
+sys.modules["pepstats_parse"] = pepstats_parse # Register it globally
+spec.loader.exec_module(pepstats_parse)
+
+# Bind downstream utility methods to execution namespace
+parse_pepstats = pepstats_parse.parse_pepstats
+build_headers = pepstats_parse.build_headers
+build_trimmed_row = pepstats_parse.build_trimmed_row
+build_full_row = pepstats_parse.build_full_row
+
+def log(message, logfile):
+    """Writes standardized logging notifications to monitoring targets."""
+    line = f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {message}"
+    print(line)
+    with open(logfile, "a") as f:
+        f.write(line + "\n")
+
+def run_pepstats(entry):
+    """
+    Pipes an isolated sequence record directly into EMBOSS standard filtering 
+    streams and forcibly restores the original FASTA header post-execution.
+    """
+    header, sequence = entry
+
+    process = subprocess.Popen(
+        ["pepstats", "-filter", "-outfile", "stdout"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True
+    )
+
+    stdout, _ = process.communicate(f">{header}\n{sequence}\n")
+    records = parse_pepstats(stdout.splitlines())
+    
+    if records:
+        record = records[0]
+        
+        # 1. Identify which key pepstats-parse uses (usually 'Gene_ID' or 'gene_id')
+        id_key = "Gene_ID" if "Gene_ID" in record else "gene_id"
+        truncated_id = record.get(id_key, "")
+        
+        # 2. OVERRIDE: Force the true FASTA header back into the parsed dictionary for the TSV
+        record[id_key] = header
+        
+        # 3. OVERRIDE: Patch the raw EMBOSS text so the .pepstats file matches reality
+        if truncated_id:
+            # EMBOSS outputs "PEPSTATS of [ID] from 1 to [Len]"
+            stdout = stdout.replace(f"PEPSTATS of {truncated_id} ", f"PEPSTATS of {header} ")
+            
+        return (record, stdout)
+        
+    return (None, None)
+
+def fasta_iter(fasta):
+    """
+    Memory-efficient streaming iterator for FASTA formatted records.
+    """
+    with open(fasta) as f:
+        header = None
+        seq_lines = []
+
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+
+            if line.startswith(">"):
+                if header:
+                    yield header, "".join(seq_lines)
+                header = line[1:]
+                seq_lines = []
+            else:
+                seq_lines.append(line)
+
+        if header:
+            yield header, "".join(seq_lines)
+
+def collect_input(input_arg):
+    """Maps dynamic path layouts into single list tracking targets."""
+    path = Path(input_arg)
+    if path.is_dir():
+        # Match the strictness of the bash route!
+        files = []
+        for ext in ["*.fa", "*.fasta", "*.pep", "*.faa"]:
+            files.extend(path.glob(ext))
+        return files
+    elif "," in input_arg:
+        return [Path(x.strip()) for x in input_arg.split(",")]
+    else:
+        return [path]
+
+def process_file(f, args, outdir, logfile):
+    """
+    Orchestrates execution pools to parallel process sequences inside a FASTA target.
+    """
+    sample = f.stem
+    log(f"Processing sample: {sample}", logfile)
+
+    TSV = outdir / "tables" / f"{sample}.tsv"
+    RAW = outdir / "pepstats_raw" / f"{sample}.pepstats" # <-- Define raw path
+    RAW.parent.mkdir(parents=True, exist_ok=True)        # <-- Ensure dir exists
+
+    entries = list(fasta_iter(f))
+    records = []
+    raw_texts = [] # <-- List to hold the raw EMBOSS output blocks
+
+    with ProcessPoolExecutor(max_workers=args.procs) as pool:
+        # Unpack the tuple we just created in run_pepstats
+        for rec, raw_out in pool.map(run_pepstats, entries, chunksize=10):
+            if rec:
+                records.append(rec)
+                raw_texts.append(raw_out)
+                
+    # Save the seamlessly reconstructed raw EMBOSS file
+    RAW.write_text("".join(raw_texts))
+
+    headers = build_headers(args.trimmed, args.dayhoff)
+    lines = ["\t".join(headers)]
+
+    for r in records:
+        row = build_trimmed_row(r) if args.trimmed else build_full_row(r, args.dayhoff)
+        lines.append("\t".join(row))
+
+    TSV.parent.mkdir(parents=True, exist_ok=True)
+    TSV.write_text("\n".join(lines) + "\n")
+    return TSV
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Streaming pepstats pipeline (header-safe mode)"
+    )
+    parser.add_argument("-f", "--fasta", required=True, help="Input FASTA file, directory, or comma list")
+    parser.add_argument("-o", "--outdir", default="output", help="Output directory (default: ./output)")
+    parser.add_argument("-d", "--dayhoff", action="store_true", help="Include Dayhoff statistics")
+    parser.add_argument("-t", "--trimmed", action="store_true", help="Write compact summary TSV")
+    parser.add_argument("-m", "--master", action="store_true", help="Generate combined master TSV")
+    parser.add_argument("-p", "--procs", type=int, default=4, help="Number of parallel workers (default: 4)")
+    args = parser.parse_args()
+
+    OUTDIR = Path(args.outdir)
+    (OUTDIR / "tables").mkdir(parents=True, exist_ok=True)
+    (OUTDIR / "master").mkdir(parents=True, exist_ok=True)
+    (OUTDIR / "logs").mkdir(parents=True, exist_ok=True)
+    (OUTDIR / "pepstats_raw").mkdir(parents=True, exist_ok=True)
+
+    LOG_FILE = OUTDIR / "logs" / "pipeline.log"
+    LOG_FILE.write_text("")
+
+    log("Pipeline started (STREAM mode execution engine initialized)", LOG_FILE)
+    FILES = collect_input(args.fasta)
+
+    MASTER_FILE = OUTDIR / "master" / "master_pepstats.tsv"
+    MASTER_FILE.write_text("")
+    FIRST = True
+
+    for f in FILES:
+        if not f.exists():
+            continue
+        if f.stat().st_size == 0:
+            log(f"Skipping empty target file descriptor: {f}", LOG_FILE)
+            continue
+
+        TSV = process_file(f, args, OUTDIR, LOG_FILE)
+
+        if args.master:
+            lines = TSV.read_text().splitlines()
+            with open(MASTER_FILE, "a") as m:
+                if FIRST:
+                    m.write("\n".join(lines) + "\n")
+                    FIRST = False
+                else:
+                    m.write("\n".join(lines[1:]) + "\n")
+
+    log("Streaming engine execution task completed cleanly.", LOG_FILE)
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())

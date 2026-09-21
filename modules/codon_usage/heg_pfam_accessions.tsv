@@ -1,0 +1,33 @@
+accession	name	category	universal
+PF00163	Ribosomal protein S4/S9 N-terminal domain	ribosomal	yes
+PF00164	Ribosomal protein S12/S23	ribosomal	yes
+PF00177	Ribosomal protein S7p/S5e	ribosomal	yes
+PF00181	Ribosomal Proteins L2, RNA binding N-terminal domain	ribosomal	yes
+PF00189	Ribosomal protein S3, C-terminal domain	ribosomal	yes
+PF00203	Ribosomal protein S19	ribosomal	yes
+PF00237	Ribosomal protein L22p/L17e	ribosomal	yes
+PF00238	Ribosomal protein L14p/L23e	ribosomal	yes
+PF00252	Ribosomal protein L16p/L10e	ribosomal	yes
+PF00253	Ribosomal protein S14p/S29e	ribosomal	yes
+PF00276	Ribosomal protein L23	ribosomal	yes
+PF00281	Ribosomal protein L5	ribosomal	yes
+PF00297	Ribosomal protein L3	ribosomal	yes
+PF00298	Ribosomal protein L11, RNA binding domain	ribosomal	yes
+PF00312	Ribosomal protein S15	ribosomal	yes
+PF00318	Ribosomal protein S2	ribosomal	yes
+PF00327	Ribosomal protein L30p/L7e	ribosomal	yes
+PF00333	Ribosomal protein S5, N-terminal domain	ribosomal	yes
+PF00338	Ribosomal protein S10p/S20e	ribosomal	yes
+PF00347	Ribosomal protein L6	ribosomal	yes
+PF00009	Elongation factor Tu GTP binding domain	elongation_factor	yes
+PF00679	Elongation factor G C-terminus	elongation_factor	yes
+PF00044	Glyceraldehyde 3-phosphate dehydrogenase, NAD binding domain	gapdh	yes
+PF02800	Glyceraldehyde 3-phosphate dehydrogenase, C-terminal domain	gapdh	yes
+PF00113	Enolase, C-terminal TIM barrel domain	enolase	yes
+PF03952	Enolase, N-terminal domain	enolase	yes
+PF00012	Hsp70 protein	chaperone	yes
+PF00118	TCP-1/cpn60 chaperonin family	chaperone	yes
+PF00166	Chaperonin 10 Kd subunit	chaperone	yes
+PF00016	Ribulose bisphosphate carboxylase large chain, catalytic domain	rubisco	no -- plant/algae/cyanobacteria only
+PF00101	Ribulose bisphosphate carboxylase, small chain	rubisco	no -- plant/algae only
+PF00504	Chlorophyll A-B binding protein	photosynthesis	no -- plant/algae only

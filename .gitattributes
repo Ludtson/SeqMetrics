@@ -1,0 +1,9 @@
+# Force LF everywhere, on every platform, regardless of a clone's local
+# core.autocrlf setting. Not a stylistic preference -- this project spent
+# real effort this session finding and fixing CRLF bugs that silently broke
+# exact-match ID lookups and corrupted sequence data at the Windows/WSL
+# boundary (see run_features.py's and several modules' own comments). A
+# shell script checked out with CRLF doesn't just misbehave, it fails to
+# execute at all ("bad interpreter" -- the shebang line becomes
+# "#!/usr/bin/env bash\r"). Don't leave this to chance per-clone.
+* text=auto eol=lf

@@ -1,0 +1,340 @@
+#!/usr/bin/env python3
+import argparse
+import re
+import sys
+from pathlib import Path
+
+
+AA_MAP = {
+    "A": "Ala",
+    "C": "Cys",
+    "D": "Asp",
+    "E": "Glu",
+    "F": "Phe",
+    "G": "Gly",
+    "H": "His",
+    "I": "Ile",
+    "K": "Lys",
+    "L": "Leu",
+    "M": "Met",
+    "N": "Asn",
+    "P": "Pro",
+    "Q": "Gln",
+    "R": "Arg",
+    "S": "Ser",
+    "T": "Thr",
+    "V": "Val",
+    "W": "Trp",
+    "Y": "Tyr",
+}
+AA_ORDER = list(AA_MAP.keys())
+PROP_ORDER = [
+    "Tiny",
+    "Small",
+    "Aliphatic",
+    "Aromatic",
+    "Non-polar",
+    "Polar",
+    "Charged",
+    "Basic",
+    "Acidic",
+]
+TRIMMED_HEADERS = [
+    "Gene_ID",
+    "Residues",
+    "Average_Residue_Weight",
+    "Charge",
+    "Isoelectric_Point",
+    "Charge_per_residue",
+    "Hydrophobic_MolePct",
+    "Polar_minus_Nonpolar",
+    "Tiny_MolePct",
+    "Small_MolePct",
+    "Aliphatic_MolePct",
+    "Aromatic_MolePct",
+    "Non_polar_MolePct",
+    "Polar_MolePct",
+    "Charged_MolePct",
+    "Basic_MolePct",
+    "Acidic_MolePct",
+]
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Convert EMBOSS pepstats output into a TSV feature table."
+    )
+    parser.add_argument("-i", "--input", required=True, help="Path to a pepstats raw output file")
+    parser.add_argument("-o", "--output", required=True, help="Path to write the TSV output")
+    parser.add_argument(
+        "-d",
+        "--dayhoff",
+        action="store_true",
+        help="Include Dayhoff statistics columns in the output",
+    )
+    parser.add_argument(
+        "-t",
+        "--trimmed",
+        action="store_true",
+        help="Write a compact summary table without amino-acid-level columns",
+    )
+    return parser.parse_args()
+
+
+def safe_float(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def format_val(value):
+    if value is None:
+        return ""
+    if isinstance(value, (int, float)):
+        return f"{value:.3f}"
+    return str(value)
+
+
+def parse_pepstats(handle):
+    records = []
+    current = None
+    mode = None
+
+    for raw in handle:
+        line = raw.rstrip("\n")
+
+        if line.startswith("PEPSTATS of "):
+            if current is not None:
+                records.append(current)
+            current = {
+                "Gene_ID": None,
+                "residues": None,
+                "avg_res_wt": None,
+                "charge": None,
+                "pI": None,
+                "aa_mole": {aa: None for aa in AA_ORDER},
+                "aa_dayhoff": {aa: None for aa in AA_ORDER},
+                "prop_mole": {prop: None for prop in PROP_ORDER},
+            }
+            mode = None
+            match = re.match(r"PEPSTATS of\s+(\S+)", line)
+            if match:
+                current["Gene_ID"] = match.group(1)
+            continue
+
+        if current is None:
+            continue
+
+        if "Residues =" in line and "Molecular weight" in line:
+            match = re.search(r"Residues\s*=\s*(\d+)", line)
+            if match:
+                current["residues"] = match.group(1)
+
+        if "Average Residue Weight" in line and "Charge" in line:
+            match = re.search(r"Average Residue Weight\s*=\s*([0-9.+-Ee]+)", line)
+            if match:
+                current["avg_res_wt"] = match.group(1)
+            match = re.search(r"Charge\s*=\s*([0-9.+-Ee]+)", line)
+            if match:
+                current["charge"] = match.group(1)
+            continue
+
+        if line.startswith("Isoelectric Point"):
+            match = re.search(r"Isoelectric Point\s*=\s*([0-9.+-Ee]+)", line)
+            if match:
+                current["pI"] = match.group(1)
+            continue
+
+        if line.startswith("Residue") and "DayhoffStat" in line:
+            mode = "residues"
+            continue
+
+        if line.startswith("Property"):
+            mode = "properties"
+            continue
+
+        if mode == "residues":
+            if not line.strip():
+                mode = None
+                continue
+            parts = line.split()
+            if len(parts) < 6:
+                continue
+            aa = parts[0]
+            if aa in AA_ORDER:
+                current["aa_mole"][aa] = parts[4]
+                current["aa_dayhoff"][aa] = parts[5]
+            continue
+
+        if mode == "properties":
+            if not line.strip():
+                mode = None
+                continue
+            parts = line.split()
+            if len(parts) < 4:
+                continue
+            prop = parts[0]
+            if prop in PROP_ORDER:
+                current["prop_mole"][prop] = parts[-1]
+            continue
+
+    if current is not None:
+        records.append(current)
+
+    return records
+
+
+def build_headers(trimmed, include_dayhoff):
+    if trimmed:
+        headers = list(TRIMMED_HEADERS)
+        if include_dayhoff:
+            headers.extend([f"{AA_MAP[aa]}_DayhoffStat" for aa in AA_ORDER])
+        return headers
+
+    headers = [
+        "Gene_ID",
+        "Residues",
+        "Average_Residue_Weight",
+        "Charge",
+        "Isoelectric_Point",
+        "Charge_per_residue",
+        "Basic_minus_Acidic",
+        "Hydrophobic_MolePct",
+        "Polar_minus_Nonpolar",
+    ]
+
+    for aa in AA_ORDER:
+        headers.append(f"{AA_MAP[aa]}_MolePct")
+
+    if include_dayhoff:
+        for aa in AA_ORDER:
+            headers.append(f"{AA_MAP[aa]}_DayhoffStat")
+
+    for prop in PROP_ORDER:
+        headers.append(f"{prop.replace('-', '_')}_MolePct")
+
+    return headers
+
+
+def build_trimmed_row(record):
+    residues = safe_float(record["residues"])
+    charge = safe_float(record["charge"])
+
+    row = [
+        record["Gene_ID"] or "",
+        record["residues"] or "",
+        format_val(safe_float(record["avg_res_wt"])),
+        format_val(charge),
+        format_val(safe_float(record["pI"])),
+    ]
+
+    if residues and residues > 0 and charge is not None:
+        row.append(format_val(charge / residues))
+    else:
+        row.append("")
+
+    aliphatic = safe_float(record["prop_mole"].get("Aliphatic"))
+    aromatic = safe_float(record["prop_mole"].get("Aromatic"))
+    if aliphatic is not None and aromatic is not None:
+        row.append(format_val(aliphatic + aromatic))
+    else:
+        row.append("")
+
+    polar = safe_float(record["prop_mole"].get("Polar"))
+    nonpolar = safe_float(record["prop_mole"].get("Non-polar"))
+    if polar is not None and nonpolar is not None:
+        row.append(format_val(polar - nonpolar))
+    else:
+        row.append("")
+
+    for prop in PROP_ORDER:
+        row.append(format_val(safe_float(record["prop_mole"][prop])))
+
+    return row
+
+
+def build_full_row(record, include_dayhoff):
+    residues = safe_float(record["residues"])
+    charge = safe_float(record["charge"])
+
+    row = [
+        record["Gene_ID"] or "",
+        record["residues"] or "",
+        format_val(safe_float(record["avg_res_wt"])),
+        format_val(charge),
+        format_val(safe_float(record["pI"])),
+    ]
+
+    if residues and residues > 0 and charge is not None:
+        row.append(format_val(charge / residues))
+    else:
+        row.append("")
+
+    basic = safe_float(record["prop_mole"].get("Basic"))
+    acidic = safe_float(record["prop_mole"].get("Acidic"))
+    if basic is not None and acidic is not None:
+        row.append(format_val(basic - acidic))
+    else:
+        row.append("")
+
+    aliphatic = safe_float(record["prop_mole"].get("Aliphatic"))
+    aromatic = safe_float(record["prop_mole"].get("Aromatic"))
+    if aliphatic is not None and aromatic is not None:
+        row.append(format_val(aliphatic + aromatic))
+    else:
+        row.append("")
+
+    polar = safe_float(record["prop_mole"].get("Polar"))
+    nonpolar = safe_float(record["prop_mole"].get("Non-polar"))
+    if polar is not None and nonpolar is not None:
+        row.append(format_val(polar - nonpolar))
+    else:
+        row.append("")
+
+    for aa in AA_ORDER:
+        row.append(format_val(safe_float(record["aa_mole"][aa])))
+
+    if include_dayhoff:
+        for aa in AA_ORDER:
+            row.append(format_val(safe_float(record["aa_dayhoff"][aa])))
+
+    for prop in PROP_ORDER:
+        row.append(format_val(safe_float(record["prop_mole"][prop])))
+
+    return row
+
+
+def main():
+    args = parse_args()
+
+    input_path = Path(args.input)
+    output_path = Path(args.output)
+
+    if not input_path.exists():
+        print(f"ERROR: input file not found: {input_path}", file=sys.stderr)
+        return 1
+
+    raw_text = input_path.read_text(encoding="utf-8")
+    records = parse_pepstats(raw_text.splitlines())
+
+    if not records:
+        print("ERROR: could not parse any pepstats records", file=sys.stderr)
+        return 1
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    headers = build_headers(args.trimmed, args.dayhoff)
+    lines = ["\t".join(headers)]
+
+    for record in records:
+        if args.trimmed:
+            lines.append("\t".join(build_trimmed_row(record)))
+        else:
+            lines.append("\t".join(build_full_row(record, args.dayhoff)))
+
+    output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

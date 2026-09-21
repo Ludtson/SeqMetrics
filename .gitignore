@@ -1,0 +1,15 @@
+# Build artifacts
+__pycache__/
+*.pyc
+
+# Isolated venvs -- built locally per docs/install_<module>.md, never committed
+# (this one alone pulls in torch/pytorch-lightning/fair-esm; genuinely large)
+.venvs/
+
+# Scratch test output -- regeneratable by running the tool; keeping the
+# small real input fixtures (test_sample/*.faa) but not the runs against them
+test_sample/out/
+test_sample/gt_check/
+test_sample/csv_test_base.csv
+test_sample/merged_test*.tsv
+test_sample/csv_merge_test.tsv

@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+
+# ==============================================================================
+# Script Name    : pepstats-run
+# Version        : 1.0.0
+# Description    : Standard high-throughput execution backend for processing safe
+#                  FASTA file structures natively using bulk EMBOSS operations.
+# Author         : Adekola Owoyemi
+# Usage          : Called automatically by pepstats-flow wrapper.
+# ==============================================================================
+
+set -euo pipefail
+
+# Locate absolute engine directory and local parsing components
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PARSER="$SCRIPT_DIR/pepstats-parse"
+
+# Initialize default runtime states
+DAYHOFF=false
+TRIMMED=false
+MASTER=false
+
+# ------------------------------------------------------------------------------
+# Function: log
+# Purpose : Writes standard ISO timestamped progress logs to both stdout and file.
+# ------------------------------------------------------------------------------
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
+}
+
+# ------------------------------------------------------------------------------
+# Function: print_help
+# Purpose : Displays command line parameter constraints for the run engine.
+# ------------------------------------------------------------------------------
+print_help() {
+cat <<EOF
+
+pepstats-run (v1.0.0) - Standard Native Engine
+
+USAGE:
+  pepstats-run -f <input> [-o <output_dir>] [options]
+
+REQUIRED:
+  -f, --fasta       Input FASTA file, folder, or comma-separated list
+
+OPTIONS:
+  -o, --outdir      Base folder output directory (default: ./output)
+  -d, --dayhoff     Include legacy Dayhoff metrics inside parsed output tables
+  -t, --trimmed     Output condensed summary tables instead of long metrics
+  -m, --master      Create a centralized cross-sample merged matrix
+  -h, --help        Show execution parameters and exit
+
+EOF
+}
+
+# ------------------------------------------------------------------------------
+# CLI Parameter Parsing Engine
+# ------------------------------------------------------------------------------
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -f|--fasta) INPUT="$2"; shift 2 ;;
+        -o|--outdir) OUTDIR="$2"; shift 2 ;;
+        -d|--dayhoff) DAYHOFF=true; shift ;;
+        -t|--trimmed) TRIMMED=true; shift ;;
+        -m|--master) MASTER=true; shift ;;
+        -p|--procs) shift 2 ;;
+        -h|--help) print_help; exit 0 ;;
+        *) echo "ERROR: Unrecognized pipeline flag option $1"; exit 1 ;;
+    esac
+done
+
+[[ -z "${INPUT:-}" ]] && print_help && exit 1
+if [[ -z "${OUTDIR:-}" ]]; then
+    OUTDIR="output"
+fi
+
+# Assert prerequisite packages and dependencies are accessible
+command -v pepstats >/dev/null || { echo "ERROR: EMBOSS pepstats binaries not found in path."; exit 1; }
+[[ -x "$PARSER" ]] || { echo "ERROR: Verification failed for parser utility at: $PARSER"; exit 1; }
+
+# Initialize file system structures
+mkdir -p "$OUTDIR"/{pepstats_raw,tables,master,logs}
+LOG_FILE="$OUTDIR/logs/pipeline.log"
+> "$LOG_FILE"
+
+log "Standard native run engine initialized successfully."
+
+# ------------------------------------------------------------------------------
+# Input File Collection
+# ------------------------------------------------------------------------------
+FILES=()
+if [[ -d "$INPUT" ]]; then
+    FILES=("$INPUT"/*)
+elif [[ "$INPUT" == *","* ]]; then
+    IFS=',' read -ra FILES <<< "$INPUT"
+else
+    FILES=("$INPUT")
+fi
+
+MASTER_FILE="$OUTDIR/master/master_pepstats.tsv"
+> "$MASTER_FILE"
+FIRST=true
+
+# ------------------------------------------------------------------------------
+# Primary High-Throughput Processing Loop
+# ------------------------------------------------------------------------------
+for f in "${FILES[@]}"; do
+    [[ ! -f "$f" ]] && continue
+    [[ ! -s "$f" ]] && { log "Skipping execution on unpopulated/empty file descriptor: $f"; continue; }
+
+    # Clean file extraction parameters safely
+    sample=$(basename "$f" | sed 's/\.[^.]*$//')
+    log "Commencing processing metrics for target sample: $sample"
+
+    RAW="$OUTDIR/pepstats_raw/${sample}.pepstats"
+    TSV="$OUTDIR/tables/${sample}.tsv"
+
+    # Execute standard native bulk EMBOSS operation
+    pepstats -sequence "$f" -outfile "$RAW" -auto
+
+    # Forward downstream parsing duties to internal schema engine
+    PARSER_ARGS=("-i" "$RAW" "-o" "$TSV")
+    if [[ "$DAYHOFF" == true ]]; then PARSER_ARGS+=("-d"); fi
+    if [[ "$TRIMMED" == true ]]; then PARSER_ARGS+=("-t"); fi
+    "$PARSER" "${PARSER_ARGS[@]}"
+
+    # Consolidate sheets seamlessly into master file
+    if [[ "$MASTER" == true ]]; then
+        if [[ "$FIRST" == true ]]; then
+            cat "$TSV" >> "$MASTER_FILE"
+            FIRST=false
+        else
+            tail -n +2 "$TSV" >> "$MASTER_FILE"
+        fi
+    fi
+done
+
+log "Standard execution process finalized cleanly."
+exit 0

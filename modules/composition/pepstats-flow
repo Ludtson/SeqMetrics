@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+
+# ==============================================================================
+# Script Name    : pepstats-flow
+# Version        : 1.0.0
+# Description    : Intelligent orchestrator and dispatcher for pepstats execution 
+#                  pipelines. Inspects FASTA input file header lengths to safely 
+#                  bypass legacy EMBOSS header truncation defects dynamically.
+# Author         : Adekola Owoyemi
+# Usage          : ./pepstats-flow -f <input_fasta> [-o <out_dir>] [options]
+# ==============================================================================
+
+set -euo pipefail
+
+# Determine script context directory to locate pipeline backend executables
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RUN="$SCRIPT_DIR/pepstats-run"
+STREAM="$SCRIPT_DIR/pepstats-stream"
+
+# ------------------------------------------------------------------------------
+# Function: print_help
+# Purpose : Displays formal standard interface usage instructions and options.
+# ------------------------------------------------------------------------------
+print_help() {
+cat <<EOF
+
+pepstats-flow (v1.0.0) - Pipeline Dispatcher
+
+USAGE:
+  pepstats-flow -f <input> [-o <output_dir>] [options]
+
+OPTIONS:
+  -f, --fasta       Input FASTA (can be a file, directory, or comma-separated list)
+  -o, --outdir      Output base directory path (default: ./output)
+  -d, --dayhoff     Include legacy Dayhoff statistic columns in output tables
+  -t, --trimmed     Write a compact summary feature matrix (drops single AA metrics)
+  -m, --master      Consolidate individual sample sheets into a single master TSV
+  -p, --procs       Number of parallel worker execution threads (stream engine only)
+  -h, --help        Display this help information and exit
+
+EOF
+}
+
+# ------------------------------------------------------------------------------
+# Argument Extraction Stage
+# Purpose: Pre-scans arguments specifically to isolate the input file path for 
+#          header structural validation without altering the original execution array.
+# ------------------------------------------------------------------------------
+INPUT=""
+
+for ((i=1; i<=$#; i++)); do
+    case "${!i}" in
+        -f|--fasta)
+            j=$((i+1))
+            INPUT="${!j}"
+            ;;
+        -h|--help)
+            print_help
+            exit 0
+            ;;
+    esac
+done
+
+# Enforce mandatory parameters
+[[ -z "${INPUT:-}" ]] && {
+    echo "ERROR: Mandatory option -f / --fasta is missing."
+    echo
+    print_help
+    exit 1
+}
+
+# ------------------------------------------------------------------------------
+# Input File Resolution Stage
+# Purpose: Locates an existing target file descriptor to dynamically inspect 
+#          sample FASTA headers for routing compatibility checks.
+# ------------------------------------------------------------------------------
+FILE=""
+
+if [[ -d "$INPUT" ]]; then
+    FILE=$(find "$INPUT" -type f | head -n1 || true)
+elif [[ "$INPUT" == *","* ]]; then
+    FILE=$(echo "$INPUT" | cut -d',' -f1)
+else
+    FILE="$INPUT"
+fi
+
+if [[ ! -f "$FILE" ]]; then
+    echo "ERROR: Could not resolve a valid target FASTA file layout from input: $INPUT"
+    exit 1
+fi
+
+# ------------------------------------------------------------------------------
+# Header Defect Risk Assessment Stage (Upgraded)
+# Purpose: Conducts a micro dry-run to detect ACTUAL EMBOSS truncation,
+#          rather than relying on arbitrary string length thresholds.
+# ------------------------------------------------------------------------------
+TRUNCATION_DETECTED=0
+
+# Extract just the first FASTA record (header + sequence)
+FIRST_RECORD=$(awk '/^>/{if (N++>0) exit} {print}' "$FILE" || true)
+
+if [[ -n "$FIRST_RECORD" ]]; then
+    # Isolate the raw original header without the '>'
+    RAW_HEADER=$(echo "$FIRST_RECORD" | head -n 1 | sed 's/^>//')
+    
+    # Run the single record through pepstats and extract the header line it generates
+    # (EMBOSS typically formats this as: "PEPSTATS of [Header]")
+    PEP_HEADER=$(echo "$FIRST_RECORD" | pepstats -filter 2>/dev/null | grep 'PEPSTATS of' | sed 's/^PEPSTATS of //' | xargs || true)
+    RAW_HEADER=$(echo "$RAW_HEADER" | xargs) # Normalize whitespace for strict comparison
+    
+    # If the headers don't match exactly, EMBOSS is structurally altering them
+    if [[ "$RAW_HEADER" != "$PEP_HEADER" && -n "$PEP_HEADER" ]]; then
+        TRUNCATION_DETECTED=1
+    fi
+fi
+
+# ------------------------------------------------------------------------------
+# Dynamic Dispatch Execution Stage
+# ------------------------------------------------------------------------------
+if (( TRUNCATION_DETECTED > 0 )); then
+    echo "[pepstats-flow] Actual header truncation detected via dry-run. Routing to: STREAM backend"
+    exec "$STREAM" "$@"
+else
+    echo "[pepstats-flow] Headers verified safe by dry-run. Routing to: STANDARD backend"
+    exec "$RUN" "$@"
+fi
