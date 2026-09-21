@@ -706,40 +706,72 @@ def run_module(name, input_path, out_path, resolved, ref_dir=None, pythonpath_by
 EXT_FOR_INPUT = {"nt": ".fna", "aa": ".faa"}
 
 
-def _filter_zero_length(src_path, filtered_dir, log):
+def _sanitize_aa_input(src_path, filtered_dir, log):
     """Every protein-input module gets this applied to its input before
-    dispatch -- a real, confirmed edge case in this project's own Stage 4
-    output (a premature-stop translation landing at amino acid 0 -- 447
-    sequences in one real trim, 10 in another): an empty sequence handed to
-    an external tool (pepstats, hcatk/tango, DeepTMHMM2, LOCALIZER) risks a
-    hard crash or a degenerate score, not a clean skip, and this project's
-    own working plan says explicitly these must be skipped, not scored.
+    dispatch. Two separate, real, confirmed problems, not hypothetical:
+
+    1. Zero-length sequences -- a premature-stop translation landing at
+       amino acid 0 (447 sequences in one real trim of this project's own
+       Stage 4 output, 10 in another). An empty sequence handed to an
+       external tool (pepstats, hcatk/tango, DeepTMHMM2, LOCALIZER) risks
+       a hard crash or a degenerate score, not a clean skip.
+
+    2. A literal trailing '*' stop-codon character -- confirmed two
+       different failure modes on the same real tracked locus
+       (AT5G15843.1) in one session: DeepTMHMM2 hard-crashes on it
+       (KeyError in ESM's tokenizer, no mapping for '*'), but `disorder`
+       silently scored the sequence WITH the '*' included as if it were a
+       225th/226th real residue -- every length- and composition-dependent
+       value in that row was wrong, with no error raised at all. Silent
+       corruption is worse than a crash. This directly violates this
+       project's own F1 rule (six protein-level tools -- IUPred3, pyHCA,
+       TANGO, PEPSTATS, DeepTMHMM, LOCALIZER -- must never see the stop
+       symbol) -- stripped here, once, centrally, rather than trusting
+       five different wrapped tools to each handle it correctly on their
+       own (confirmed at least one doesn't).
+
     `disorder` already filters <30 residues internally (its own threshold,
-    unrelated to this fix); the other four modules were untested for this
-    case, so this is applied uniformly rather than trusting each one's own
-    behavior individually. Cached per source file (by content hash) so the
-    same batch file isn't re-filtered once per module that needs it."""
+    unrelated to either fix here); untested whether the other four
+    modules have their own length floor, so both fixes apply uniformly.
+    Cached per source file so the same batch file isn't re-processed once
+    per module that needs it."""
     filtered_dir.mkdir(parents=True, exist_ok=True)
     dest_path = filtered_dir / src_path.name
     if dest_path.exists():
         return dest_path
 
     kept, skipped = [], []
+    n_stop_stripped = 0
     name, seq = None, []
+
+    def _finalize(name, seq_lines):
+        nonlocal n_stop_stripped
+        seq = "".join(seq_lines)
+        if seq.endswith("*"):
+            seq = seq[:-1]
+            n_stop_stripped += 1
+        (kept if seq else skipped).append((name, seq))
+
     with open(src_path) as f:
         for line in f:
             if line.startswith(">"):
                 if name is not None:
-                    (kept if seq else skipped).append((name, "".join(seq)))
+                    _finalize(name, seq)
                 name, seq = line[1:].strip(), []
             else:
                 seq.append(line.strip())
         if name is not None:
-            (kept if seq else skipped).append((name, "".join(seq)))
+            _finalize(name, seq)
 
     with open(dest_path, "w", newline="\n") as out:
         for seq_id, seq in kept:
             out.write(f">{seq_id}\n{seq}\n")
+
+    if n_stop_stripped:
+        msg = (f"'{src_path.name}': stripped a trailing stop-codon '*' from "
+               f"{n_stop_stripped} sequence(s) before protein-input modules")
+        print(f"[run_features] {msg}", file=sys.stderr)
+        log.write(msg)
 
     if skipped:
         skipped_ids = ", ".join(sid for sid, _ in skipped[:10])
@@ -928,13 +960,13 @@ def main():
             module_out_dir = args.out_dir / name
             module_out_dir.mkdir(parents=True, exist_ok=True)
             for input_path in matches:
-                real_input = (_filter_zero_length(input_path, filtered_dir, log)
+                real_input = (_sanitize_aa_input(input_path, filtered_dir, log)
                               if spec["input"] == "aa" else input_path)
                 out_path = module_out_dir / f"{input_path.stem}.tsv"
                 tasks.append((name, real_input, out_path, resolved, ref))
         else:
             input_path = args.nt if spec["input"] == "nt" else args.aa
-            real_input = (_filter_zero_length(input_path, filtered_dir, log)
+            real_input = (_sanitize_aa_input(input_path, filtered_dir, log)
                           if spec["input"] == "aa" else input_path)
             out_path = args.out_dir / f"{name}.tsv"
             tasks.append((name, real_input, out_path, resolved, ref))
