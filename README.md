@@ -171,15 +171,30 @@ resolved module's environment and a best-effort tool version, every
 task. Not a second, structured format -- plain timestamped lines, matching
 every wrapper script's own logging style already in this repo.
 
-### Zero-length sequence guard
+### aa-input sanitization: stop codons and zero-length sequences
 
-Before dispatch, every protein-input module's `.faa` source is checked for
-zero-length records (a real case, not hypothetical: a premature-stop
-translation landing at amino acid 0 -- confirmed at 2.6% and 0.5% rates in
-two real trims of one project's own upstream data). Zero-length records are
-filtered into a cached copy under `<out_dir>/_filtered_aa/` before any
-protein-input module runs against that file, and every skip is logged (both
-to stderr and the audit log above) -- an empty sequence handed to an
-external tool risks a hard crash or a degenerate score, not a clean skip, so
-this is enforced uniformly rather than trusting each wrapped tool's own
-behavior on empty input. Nucleotide-input modules are unaffected.
+Before dispatch, every protein-input module's `.faa` source is passed
+through two real, confirmed fixes -- into a cached copy under
+`<out_dir>/_filtered_aa/`, logged both to stderr and the audit log above.
+Nucleotide-input modules are unaffected.
+
+**A trailing stop-codon `*` is stripped from every sequence.** Confirmed
+live, not hypothetical: running the real tracked locus AT5G15843.1's
+un-stripped form through this orchestrator produced two different failure
+modes in one session -- `tm_domain` hard-crashed (ESM's tokenizer has no
+mapping for `*`), while `disorder` did NOT crash, it silently scored the
+sequence *with* the `*` included as a real residue, corrupting every
+length- and composition-dependent value in that row with no error at all.
+Silent corruption is worse than a crash. Stripped centrally here, once,
+rather than trusting five different wrapped tools (IUPred3, pyHCA, TANGO,
+PEPSTATS, DeepTMHMM, LOCALIZER) to each handle it correctly on their own --
+confirmed at least one doesn't.
+
+**Zero-length records are filtered out** (a real case, not hypothetical: a
+premature-stop translation landing at amino acid 0 -- confirmed at 2.6%
+and 0.5% rates in two real trims of one project's own upstream data; this
+check runs *after* stop-stripping, so a sequence that was only a bare stop
+codon is correctly caught here too) -- an empty sequence handed to an
+external tool risks a hard crash or a degenerate score, not a clean skip,
+so this is enforced uniformly rather than trusting each wrapped tool's own
+behavior on empty input.
