@@ -1,68 +1,45 @@
 # Install: localization (LOCALIZER)
 
-LOCALIZER predicts chloroplast/mitochondrial transit peptides (cTP/mTP)
-and nuclear localization signals (NLS) in plant protein sequences.
-**Plant-specific** -- see README's note on a general-organism alternative
-(TargetP or similar) for non-plant use, not yet built.
+LOCALIZER predicts chloroplast/mitochondrial transit peptides
+(cTP/mTP) and nuclear localization signals (NLS) in plant protein
+sequences. Plant-specific — no general-organism alternative (e.g.
+TargetP) is built into this repo.
 
-GPL-3.0 licensed, no registration needed. This repo ships the wrapper
-scripts only (`run_localizer.py`, `localizer_bin.py`) -- never LOCALIZER
-itself, per its own upstream policy (a prior integration attempt in this
-lab already documented this exact rule: "LOCALIZER must be installed by
-users from its official GitHub repository... do not redistribute bundled
-LOCALIZER installs").
+GPL-3.0 licensed, no registration needed. This repo ships wrapper
+scripts only (`run_localizer.py`, `localizer_bin.py`), never LOCALIZER
+itself, per its own redistribution policy.
 
-## Real dependency list, verified by direct install and test -- not just
-## LOCALIZER's own documentation, which misses one of these
+## Dependencies
 
-1. **LOCALIZER itself**:
+1. **LOCALIZER itself:**
    ```
    git clone https://github.com/JanaSperschneider/LOCALIZER.git
    cd LOCALIZER/Scripts
    unzip weka-3-6-12.zip
    ```
-2. **Java** -- genuinely required (`java -cp weka.jar
-   weka.classifiers.functions.SMO`, called directly from
-   `localization.py`). **Not mentioned in this lab's own earlier HTLCP
-   integration doc's dependency list** -- only found by reading
-   LOCALIZER's actual source, not by trusting the existing setup guide.
-3. **Perl** -- for NLStradamus, bundled as `nlstradamus.pl` inside the
-   distribution; only the interpreter needs installing.
-4. **Python 3** -- runs `LOCALIZER.py` itself.
-5. **EMBOSS's `pepstats`** -- real gotcha, confirmed by direct test:
-   LOCALIZER does **not** look for `pepstats` on PATH. It hardcodes an
-   expected path in `LOCALIZER.py` (`SCRIPT_PATH + '/EMBOSS-6.5.7/emboss/'`,
-   then string-concatenates `'pepstats'` directly onto it) and refuses to
-   run at all if that exact directory doesn't exist -- even if a perfectly
-   good `pepstats` is already on PATH. Compiling EMBOSS from source there
-   (LOCALIZER's own documented approach) works but is slow and duplicates
-   an EMBOSS install this project already has via conda for the
-   `composition` module. Cheaper fix, used here:
+2. **Java** — required for `java -cp weka.jar
+   weka.classifiers.functions.SMO`, called directly by
+   `localization.py`.
+3. **Perl** — for NLStradamus (`nlstradamus.pl`, bundled with
+   LOCALIZER).
+4. **Python 3** — runs `LOCALIZER.py`.
+5. **EMBOSS's `pepstats`** — LOCALIZER does not look for `pepstats` on
+   PATH. It hardcodes `SCRIPT_PATH + '/EMBOSS-6.5.7/emboss/pepstats'`
+   and refuses to run unless that exact path exists. Fix, without a
+   full EMBOSS rebuild:
    ```
    mkdir -p <LOCALIZER>/Scripts/EMBOSS-6.5.7/emboss
    ln -s $(which pepstats) <LOCALIZER>/Scripts/EMBOSS-6.5.7/emboss/pepstats
    ```
-   Zero extra disk, satisfies LOCALIZER's hardcoded check exactly.
 
-## One conda env, not two
+## Environment
 
-All of the above (EMBOSS, Perl, Java, Python) live in the **same
-`em_boss` env** already used by `composition` -- not a separate
-`localizer`-specific env. A dedicated env was created and tested first,
-then deliberately merged back into `em_boss` once it became clear it was
-just duplicating a ~200MB EMBOSS install for no reason:
+EMBOSS, Perl, Java, and Python all live in the `em_boss` env (shared
+with `composition`), not a separate env:
 ```
+conda create -n em_boss -c bioconda -c conda-forge emboss   # skip if already done for composition
 conda install -n em_boss -c conda-forge perl openjdk python=3.11
 ```
-
-## Redistribution policy
-
-LOCALIZER itself, WEKA, and NLStradamus are all third-party -- this repo
-never bundles any of them, only the two wrapper scripts. Consistent with
-the exact same rule already established (independently) in a prior
-integration attempt in this lab (`htlcp`'s own
-`README.md`/`BROAD_PIPELINE_SETUP.md`): fetch major dependencies from
-official sources, never re-host them.
 
 ## Usage
 
@@ -74,22 +51,16 @@ python run_localizer.py proteins.faa \
     --localizer-parser localizer_bin.py
 ```
 
-Real output columns, verified against real LOCALIZER predictions on its
-own bundled Arabidopsis test set: `ID, CLS_binary_0no_1yes,
-MLS_binary_0no_1yes, NLS_binary_0no_1yes, CLS_prob, MLS_prob, NLS_motif`
-(chloroplast/mitochondrial/nuclear signal presence, probabilities where
-LOCALIZER reports them -- NLS is motif-based and typically has none).
+Output columns: `ID, CLS_binary_0no_1yes, MLS_binary_0no_1yes,
+NLS_binary_0no_1yes, CLS_prob, MLS_prob, NLS_motif`. NLS is
+motif-based and typically has no probability.
 
-## Git-Bash-for-Windows gotcha with `--module-ref`
+## Git Bash on Windows
 
-If your LOCALIZER install lives inside WSL (e.g.
-`/home/user/.../LOCALIZER.py`, since Java/WEKA/Perl are more naturally
-installed there) and you invoke `run_features.py` from **Git Bash on
-Windows** specifically, Git Bash's own MSYS layer auto-converts any
-argument that looks like an absolute POSIX path into a Windows path
-*before Python ever sees it* -- confirmed by a real failure, the same
-`--module-ref localization=/home/.../LOCALIZER.py` value arrived at
-`run_features.py` mangled into a path under Git's own install directory.
-This is not a SeqMetrics bug (PowerShell, cmd.exe, and native WSL bash
-don't do this), but if you hit it from Git Bash, prefix the command with
+If your LOCALIZER install lives inside WSL and you invoke
+`run_features.py` from Git Bash specifically, Git Bash's MSYS layer
+rewrites any argument that looks like an absolute POSIX path (e.g.
+`--module-ref localization=/home/.../LOCALIZER.py`) into a Windows
+path before Python sees it. PowerShell, cmd.exe, and native WSL bash
+do not do this. If you hit it, prefix the command with
 `MSYS_NO_PATHCONV=1`.
