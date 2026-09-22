@@ -207,4 +207,13 @@ fi
 
 if [ ! -f cai.coa ]; then
   echo "[$species] WARNING: cai.coa was not produced or was rejected by validation. Stage 2 will halt (no fallback)." >> "${log_file}"
+  # Real bug, confirmed live: this used to detect the failure (the warning
+  # above) but never actually exit non-zero -- the script fell off the end
+  # and returned exit 0 regardless, so a caller checking $? saw success even
+  # though no reference was built at all. Confirmed on a real run: this
+  # exact path was hit when the input FASTA's headers didn't match the HEG
+  # ID list's ID format (multi-field Araport11 headers vs. bare gene IDs),
+  # high_expression.fna came out empty, and the script exited 0 anyway.
+  echo "ERROR: cai.coa was not produced for '${species}' -- see ${log_file} for why (common cause: the input FASTA's headers don't match the HEG ID list's ID format exactly)." >&2
+  exit 1
 fi

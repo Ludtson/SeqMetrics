@@ -118,10 +118,38 @@ Run via `calculate_indices.sh <cleaned_fasta_abs> <species> <workdir_abs>
 <heg_dir_or_NONE> <basis_mode: auto|heg|coa>` for one species, or let
 `orchestrate_codonw.sh -i <dir> -o <outdir> -e <heg_dir> -b <basis_mode>`
 drive it across every species-named file in a directory (species is
-parsed from each file's basename). `auto` tries HEG first and falls back
-to top-5%-Fop only if no HEG file is found for that species -- and now
-logs which one actually ran per species, rather than deciding it by
-accident of which file happened to exist.
+parsed from each file's basename) -- **`orchestrate_codonw.sh` calls a
+`run_species.sh` in the same directory that does not exist in this repo**,
+confirmed by direct search, not assumed missing. Calling
+`orchestrate_codonw.sh` will fail immediately. Call `calculate_indices.sh`
+directly per species until this is rebuilt. `auto` tries HEG first and
+falls back to top-5%-Fop only if no HEG file is found for that species --
+and now logs which one actually ran per species, rather than deciding it
+by accident of which file happened to exist.
+
+**`<cleaned_fasta_abs>` means exactly what it says -- confirmed the hard
+way.** `calculate_indices.sh` matches HEG IDs against FASTA headers by
+*exact string comparison* (a hash lookup, not a first-token split) --
+see the script's own comment above its extraction step. A CDS FASTA
+straight from a genome annotation (e.g. Araport11's
+`>ATCG00500.1 pacid=... locus=... ID=...`) will silently match **zero**
+HEG genes against an ID list built from bare gene IDs, because
+`substr($0,2)` on that header is the whole multi-field string, never
+just `ATCG00500.1`. `high_expression.fna` comes out empty, no `.coa`
+files get built -- and a real bug, also fixed 2026-09-22, meant this
+used to still **exit 0**, so nothing looked wrong unless you checked the
+actual output files. Two ways to get correctly-cleaned headers:
+1. Use a CDS FASTA that's already single-token-per-header (e.g. this
+   project's own `longest_isoform`-style outputs, where the header is
+   just the gene ID and nothing else), matched 1:1 with whatever protein
+   FASTA the HEG ID list was built from (same gene count -- verify with
+   `grep -c "^>"` on both before trusting the pairing).
+2. Run `remap_seq_ids.py prepare` on the raw FASTA first, then also
+   translate the HEG ID list into that same remapped `seqN` ID space
+   using the resulting mapping table before calling
+   `calculate_indices.sh` -- this is what the missing `run_species.sh`
+   was supposed to automate; doing it by hand works but is real,
+   repeatable manual work per species until that script exists.
 
 **Stage 2 -- scoring, against an already-built reference.** This is
 SeqMetrics' own job (`run_features.py --modules codon_usage`) --
