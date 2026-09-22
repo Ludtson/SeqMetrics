@@ -11,12 +11,17 @@ itself, per its own redistribution policy.
 
 ## Dependencies
 
-1. **LOCALIZER itself:**
+1. **LOCALIZER itself.** Clone it as a sibling of this repo, not
+   somewhere ad hoc — every `--module-ref localization=...` example
+   below, and every project script that calls `run_features.py`, uses
+   this exact path:
    ```
+   cd ..                      # next to SeqMetrics, not inside it
    git clone https://github.com/JanaSperschneider/LOCALIZER.git
    cd LOCALIZER/Scripts
    unzip weka-3-6-12.zip
    ```
+   Result: `<SeqMetrics's parent dir>/LOCALIZER/Scripts/LOCALIZER.py`.
 2. **Java** — required for `java -cp weka.jar
    weka.classifiers.functions.SMO`, called directly by
    `localization.py`.
@@ -45,11 +50,14 @@ conda install -n em_boss -c conda-forge perl openjdk python=3.11
 
 ```
 python run_localizer.py proteins.faa \
-    --localizer-script <path>/LOCALIZER/Scripts/LOCALIZER.py \
+    --localizer-script ../LOCALIZER/Scripts/LOCALIZER.py \
     --mode plant \
     --output OUTDIR \
     --localizer-parser localizer_bin.py
 ```
+
+Same path via `run_features.py`: `--module-ref localization=../LOCALIZER/Scripts/LOCALIZER.py`
+(or the absolute equivalent, `<SeqMetrics's parent dir>/LOCALIZER/Scripts/LOCALIZER.py`).
 
 Output columns: `ID, CLS_binary_0no_1yes, MLS_binary_0no_1yes,
 NLS_binary_0no_1yes, CLS_prob, MLS_prob, NLS_motif`. NLS is
