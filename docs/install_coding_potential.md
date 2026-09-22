@@ -62,10 +62,12 @@ module docstring). Unlike codonW, CPAT has no working-directory
 requirement — every path handed to `cpat` must be absolute, which
 `run_features.py` guarantees for `--module-ref`.
 
-**Filenames must be exactly `hexamer.tsv` and `logit.RData`** in the
-`--module-ref` directory — `make_logitModel -o model` produces
-`model.logit.RData`; rename or copy it to `logit.RData` before
-scoring.
+`hexamer.tsv` must be named exactly that. `logit.RData` is resolved
+automatically — `make_logitModel -o model` produces `model.logit.RData`,
+not a bare `logit.RData`, and `run_features.py` accepts that directly
+as long as it is the only `*.logit.RData` file in the `--module-ref`
+directory. If more than one is present, name the one you want to use
+exactly `logit.RData`.
 
 Output columns: `ID, mRNA, ORF_strand, ORF_frame, ORF_start, ORF_end,
 ORF, Fickett, Hexamer, Coding_prob`, plus `Gene_ID` (restored from

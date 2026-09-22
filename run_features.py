@@ -608,6 +608,20 @@ def run_module(name, input_path, out_path, resolved, ref_dir=None, pythonpath_by
         ref_dir = Path(ref_dir)
         hexamer = ref_dir / "hexamer.tsv"
         logit_model = ref_dir / "logit.RData"
+        if not logit_model.exists():
+            # CPAT's own make_logitModel -o <prefix> naturally produces
+            # <prefix>.logit.RData, not a bare logit.RData -- every user of
+            # CPAT's own documented usage hits this, not a one-off naming
+            # quirk. Accept it directly if it's the only candidate, rather
+            # than requiring a manual rename every time.
+            candidates = sorted(ref_dir.glob("*.logit.RData"))
+            if len(candidates) == 1:
+                logit_model = candidates[0]
+            elif len(candidates) > 1:
+                raise FileNotFoundError(
+                    f"coding_potential: no logit.RData at {ref_dir}, and "
+                    f"multiple *.logit.RData candidates found ({[c.name for c in candidates]}) "
+                    f"-- ambiguous, rename the one you want to logit.RData explicitly")
         if not hexamer.exists() or not logit_model.exists():
             raise FileNotFoundError(
                 f"coding_potential: need both {hexamer} and {logit_model} -- "
