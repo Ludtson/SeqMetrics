@@ -71,19 +71,37 @@ def parse_membrane_types(tsv_path):
     return result
 
 
+def resolve_device(requested, dtm2_path):
+    """'auto' asks the dtm2 venv's own torch whether a CUDA GPU is usable;
+    any failure to answer falls back to cpu."""
+    if requested != "auto":
+        return requested
+    bindir = Path(dtm2_path).parent
+    for name in ("python", "python3", "python.exe"):
+        py = bindir / name
+        if py.exists():
+            try:
+                r = subprocess.run([str(py), "-c", "import torch; print(torch.cuda.is_available())"],
+                                   capture_output=True, text=True, timeout=120)
+                return "cuda" if r.stdout.strip() == "True" else "cpu"
+            except (OSError, subprocess.SubprocessError):
+                return "cpu"
+    return "cpu"
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("-i", "--input", required=True, type=Path, help="Protein FASTA")
     ap.add_argument("-o", "--out", required=True, type=Path, help="Output TSV path")
     ap.add_argument("--dtm2", required=True, help="Path to the dtm2 executable")
-    ap.add_argument("--device", default="cpu", help="Device to run on (default: cpu -- "
-                    "this wrapper exists specifically because the official DeepTMHMM "
-                    "requires registration for CPU/local use; forcing GPU defeats that purpose "
-                    "for anyone without one)")
+    ap.add_argument("--device", default="auto",
+                    help="auto (default: GPU if the dtm2 venv's torch can see one, else cpu), cpu, or cuda")
     args = ap.parse_args()
+    device = resolve_device(args.device, args.dtm2)
+    print(f"[run_dtm2] device: {device}", file=sys.stderr)
 
     with tempfile.TemporaryDirectory() as tmp:
-        cmd = [args.dtm2, str(args.input), tmp, "--device", args.device]
+        cmd = [args.dtm2, str(args.input), tmp, "--device", device]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
             sys.stderr.write(result.stderr)

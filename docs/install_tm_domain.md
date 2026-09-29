@@ -4,8 +4,14 @@ The official DTU/BioLib DeepTMHMM requires registration for local
 (non-Docker) use. This module uses `fteufel/DeepTMHMM2`
 (github.com/fteufel/DeepTMHMM2) instead, an ungated reimplementation.
 No license notice is present in that repo — verify redistribution
-rights yourself before relying on it. CLI tool is `dtm2`, defaults to
-CPU.
+rights yourself before relying on it. CLI tool is `dtm2`.
+
+**GPU vs CPU.** `run_dtm2.py` uses `--device auto` by default: GPU if
+the venv's `torch` can see one, CPU otherwise. The chosen device is
+printed to stderr. On an RTX A6000 this ran ~9x faster than CPU
+(40.7 vs 4.4 sequences/s on the same input). On CPU, avoid running
+many `tm_domain` jobs in parallel: each one uses many cores, and
+concurrent runs compete for them.
 
 **Isolated venv, not conda, not the system Python:**
 ```
