@@ -36,6 +36,30 @@ itself, per its own redistribution policy.
    mkdir -p <LOCALIZER>/Scripts/EMBOSS-6.5.7/emboss
    ln -s $(which pepstats) <LOCALIZER>/Scripts/EMBOSS-6.5.7/emboss/pepstats
    ```
+6. **Patch for parallel runs** — needed when running several
+   species at once (`--jobs` > 1). Concurrent Java processes collide
+   on Java's shared performance-data folder in `/tmp`, and the losing
+   process prints a warning into WEKA's output. `parse_weka_output()`
+   in `localization.py` skips exactly 5 header lines, so that extra
+   line pushes the `inst#` header into the data and the run fails with
+   `ValueError: invalid literal for int() with base 10: 'inst#'`. It
+   is random, so a different species can fail each run. Fix:
+   ```
+   cd <LOCALIZER>/Scripts
+   cp localization.py localization.py.bak
+   sed -i "s/\['java', '-cp'/['java', '-XX:-UsePerfData', '-cp'/g" localization.py
+   python3 - <<'EOF'
+   p = "localization.py"
+   s = open(p).read()
+   old = "        content = content[5:]\n\n        for line in content:\n            if line.strip():"
+   new = "\n        for line in content:\n            if line.strip() and line.split()[0].isdigit():"
+   assert s.count(old) == 1, s.count(old)
+   open(p, "w").write(s.replace(old, new))
+   print("parser patched")
+   EOF
+   ```
+   The first edit stops Java writing the shared file. The second makes
+   the parser read only lines that start with an instance number.
 
 ## Environment
 
