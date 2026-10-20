@@ -33,6 +33,32 @@ except ImportError:
 
 DEFAULT_GPU_LOCK = os.environ.get("SEQMETRICS_GPU_LOCK", "/tmp/seqmetrics_gpu.lock")
 STDERR_TAIL_LINES = 40
+# IUPAC ambiguity / non-standard residues -> closest standard residue. DeepTMHMM2's
+# encoder only knows the 20 standard amino acids (+X) and crashes on e.g. 'J'
+# (KeyError: 'J'). J = Leu/Ile (both hydrophobic), B = Asn/Asp, Z = Gln/Glu,
+# U = selenocysteine, O = pyrrolysine. Applied to the copy fed to dtm2 only;
+# each protein's number of replaced residues is reported in the output.
+AMBIGUOUS = {"J": "L", "B": "N", "Z": "Q", "U": "C", "O": "K"}
+
+
+def write_standardized(src, dest):
+    """Copy src to dest replacing AMBIGUOUS residues; return {seq_id: n_replaced}."""
+    table = str.maketrans("".join(AMBIGUOUS), "".join(AMBIGUOUS.values()))
+    counts, cur = {}, None
+    with open(src) as inp, open(dest, "w", newline="\n") as out:
+        for line in inp:
+            if line.startswith(">"):
+                tok = line[1:].split()
+                cur = tok[0] if tok else None
+                if cur is not None:
+                    counts.setdefault(cur, 0)
+                out.write(line.rstrip("\r\n") + "\n")
+            else:
+                seq = line.rstrip("\r\n")
+                if cur is not None:
+                    counts[cur] += sum(seq.upper().count(a) for a in AMBIGUOUS)
+                out.write(seq.translate(table).translate(str.maketrans("jbzuo", "lnqck")) + "\n")
+    return counts
 
 
 def parse_gff3(gff3_path):
@@ -168,7 +194,14 @@ def main():
     print(f"[run_dtm2] device: {device}", file=sys.stderr)
 
     with tempfile.TemporaryDirectory() as tmp:
-        cmd = [args.dtm2, str(args.input), tmp, "--device", device]
+        std_input = Path(tmp) / "input_standard.faa"
+        replaced = write_standardized(args.input, std_input)
+        n_prot = sum(1 for v in replaced.values() if v)
+        if n_prot:
+            print(f"[run_dtm2] {n_prot} proteins contained ambiguity codes "
+                  f"({sum(replaced.values())} residues) -> replaced for dtm2 only: "
+                  + ", ".join(f"{a}->{b}" for a, b in AMBIGUOUS.items()), file=sys.stderr)
+        cmd = [args.dtm2, str(std_input), tmp, "--device", device]
         slot = gpu_slot(args.gpu_lock, args.gpu_min_free_mb) if device == "cuda" else contextlib.nullcontext()
         with slot:
             result = subprocess.run(cmd, capture_output=True, text=True)
@@ -202,12 +235,14 @@ def main():
             writer = csv.writer(f, delimiter="\t", lineterminator="\n")
             header = (["Seq_ID", "N_TMRs"]
                        + [f"Residues_{label}" for label in all_topology_labels]
-                       + [f"MembraneProb_{col.replace(' ', '_')}" for col in all_membrane_cols])
+                       + [f"MembraneProb_{col.replace(' ', '_')}" for col in all_membrane_cols]
+                       + ["Ambiguous_residues_replaced"])
             writer.writerow(header)
             for seq_id in sorted(n_tmrs):
                 row = [seq_id, n_tmrs[seq_id]]
                 row += [topology_counts.get(seq_id, {}).get(label, 0) for label in all_topology_labels]
                 row += [membrane_probs.get(seq_id, {}).get(col, "NA") for col in all_membrane_cols]
+                row += [replaced.get(seq_id, 0)]
                 writer.writerow(row)
 
 

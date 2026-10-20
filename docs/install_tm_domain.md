@@ -32,6 +32,21 @@ On failure only the last 40 lines of dtm2's stderr are kept (its
 progress bar otherwise fills the log), and an out-of-memory error adds a
 hint. CPU runs and Windows (no `fcntl`) skip the lock.
 
+**Ambiguity codes.** DeepTMHMM2's encoder knows only the standard amino
+acids and crashes on IUPAC ambiguity codes (`KeyError: 'J'`). Some NCBI
+proteomes contain them. `run_dtm2.py` therefore feeds dtm2 a copy in which
+J→L (Leu/Ile), B→N (Asn/Asp), Z→Q (Gln/Glu), U→C (selenocysteine) and
+O→K (pyrrolysine).
+
+- Only the copy given to dtm2 changes. Every other module sees the
+  original sequence.
+- The number of replaced residues per protein is in the output column
+  `Ambiguous_residues_replaced`, so affected proteins can be checked or
+  dropped. The total is logged.
+- A transmembrane call rests on a ~20-residue hydrophobic stretch, so one
+  L-vs-I choice rarely changes it. To confirm on your data, rerun the
+  affected proteins with J→I and compare.
+
 **Isolated venv, not conda, not the system Python:**
 ```
 python -m venv .venvs/deeptmhmm2
