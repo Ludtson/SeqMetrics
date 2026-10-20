@@ -16,12 +16,23 @@ Usage:
 """
 
 import argparse
+import contextlib
 import csv
+import os
 import re
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
+
+try:
+    import fcntl  # POSIX only; on Windows the GPU lock is skipped (see gpu_slot)
+except ImportError:
+    fcntl = None
+
+DEFAULT_GPU_LOCK = os.environ.get("SEQMETRICS_GPU_LOCK", "/tmp/seqmetrics_gpu.lock")
+STDERR_TAIL_LINES = 40
 
 
 def parse_gff3(gff3_path):
@@ -89,6 +100,57 @@ def resolve_device(requested, dtm2_path):
     return "cpu"
 
 
+def gpu_free_mb():
+    """Smallest free memory (MiB) across visible GPUs per nvidia-smi, or None
+    if nvidia-smi isn't available -- the caller then skips the memory wait."""
+    try:
+        r = subprocess.run(["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
+                           capture_output=True, text=True, timeout=30)
+        values = [int(v) for v in r.stdout.split() if v.strip().isdigit()]
+        return min(values) if r.returncode == 0 and values else None
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+
+
+@contextlib.contextmanager
+def gpu_slot(lock_path, min_free_mb, poll_s=60):
+    """Serialize GPU use across processes, then wait for enough free memory.
+
+    One dtm2 run loads the ESM2-650M model (~4-8 GB on the GPU); several at
+    once on one card ran out of memory and crashed. The exclusive flock makes
+    every other SeqMetrics tm_domain run wait its turn -- released by the OS
+    even if this process dies, so nothing stays stuck. The free-memory check
+    then covers GPU jobs the lock can't see (other users, other tools)."""
+    lock = None
+    if fcntl is None:
+        print("[run_dtm2] GPU lock unavailable on this OS; running without it", file=sys.stderr)
+    else:
+        try:
+            fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o666)
+            with contextlib.suppress(OSError):
+                os.chmod(lock_path, 0o666)  # shared machine: other users' runs need the same lock
+            lock = os.fdopen(fd, "r+")
+        except OSError as e:
+            print(f"[run_dtm2] cannot open GPU lock {lock_path} ({e}); running without it", file=sys.stderr)
+    try:
+        if lock is not None:
+            print(f"[run_dtm2] waiting for GPU lock {lock_path}", file=sys.stderr)
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            print("[run_dtm2] GPU lock acquired", file=sys.stderr)
+        while True:
+            free = gpu_free_mb()
+            if free is None or free >= min_free_mb:
+                break
+            print(f"[run_dtm2] GPU free {free} MiB < {min_free_mb} MiB needed; checking again in {poll_s} s",
+                  file=sys.stderr)
+            time.sleep(poll_s)
+        yield
+    finally:
+        if lock is not None:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+            lock.close()
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("-i", "--input", required=True, type=Path, help="Protein FASTA")
@@ -96,15 +158,28 @@ def main():
     ap.add_argument("--dtm2", required=True, help="Path to the dtm2 executable")
     ap.add_argument("--device", default="auto",
                     help="auto (default: GPU if the dtm2 venv's torch can see one, else cpu), cpu, or cuda")
+    ap.add_argument("--gpu-lock", default=DEFAULT_GPU_LOCK,
+                    help="GPU runs only: lock file that queues tm_domain runs one at a time "
+                         "(default: $SEQMETRICS_GPU_LOCK or /tmp/seqmetrics_gpu.lock)")
+    ap.add_argument("--gpu-min-free-mb", type=int, default=8000,
+                    help="GPU runs only: wait until this much GPU memory is free before starting (default 8000)")
     args = ap.parse_args()
     device = resolve_device(args.device, args.dtm2)
     print(f"[run_dtm2] device: {device}", file=sys.stderr)
 
     with tempfile.TemporaryDirectory() as tmp:
         cmd = [args.dtm2, str(args.input), tmp, "--device", device]
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        slot = gpu_slot(args.gpu_lock, args.gpu_min_free_mb) if device == "cuda" else contextlib.nullcontext()
+        with slot:
+            result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
-            sys.stderr.write(result.stderr)
+            # dtm2's stderr includes a tqdm bar (one line per update -- ~30k
+            # lines for a proteome); only the tail holds the actual error.
+            tail = result.stderr.splitlines()[-STDERR_TAIL_LINES:]
+            sys.stderr.write("\n".join(tail) + "\n")
+            if "OutOfMemoryError" in result.stderr:
+                sys.stderr.write("[run_dtm2] hint: GPU out of memory -- another GPU job may be running; "
+                                 "raise --gpu-min-free-mb or use --device cpu\n")
             sys.exit(f"ERROR: dtm2 failed (exit {result.returncode})")
 
         gff3 = Path(tmp) / "TMRs.gff3"
