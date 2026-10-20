@@ -720,6 +720,44 @@ def run_module(name, input_path, out_path, resolved, ref_dir=None, pythonpath_by
 EXT_FOR_INPUT = {"nt": ".fna", "aa": ".faa"}
 
 
+def _existing_rows(path):
+    """Data rows in an existing output TSV (lines after the header), or None
+    if the file is missing. Used by --resume."""
+    if not path.exists():
+        return None
+    with open(path) as f:
+        return max(sum(1 for line in f if line.strip()) - 1, 0)
+
+
+_seq_count_cache = {}
+
+
+def _fasta_records(path):
+    """Number of '>' records in a FASTA, cached per path -- one input is
+    shared by several modules, so it's counted once per invocation."""
+    key = str(path)
+    if key not in _seq_count_cache:
+        with open(path) as f:
+            _seq_count_cache[key] = sum(1 for line in f if line.startswith(">"))
+    return _seq_count_cache[key]
+
+
+def _resume_skip(name, input_path, out_path, log):
+    """True if --resume should skip this task: its output already holds at
+    least one data row. Modules only write their final TSV on success, so a
+    crash leaves no file and the task reruns."""
+    rows = _existing_rows(out_path)
+    if not rows:
+        return False
+    expected = _fasta_records(input_path)
+    msg = f"RESUME skip '{name}' on {input_path.name} ({rows} rows, input has {expected})"
+    if rows != expected:
+        msg = "WARN " + msg + " -- row count differs from input"
+    print(f"[run_features] {msg}", file=sys.stderr)
+    log.write(msg)
+    return True
+
+
 def _sanitize_aa_input(src_path, filtered_dir, log):
     """Every protein-input module gets this applied to its input before
     dispatch. Two separate, real, confirmed problems, not hypothetical:
@@ -838,6 +876,12 @@ def main():
                           "existing behavior). WSL-bridged modules each spawn a "
                           "wsl.exe/conda session per task -- don't set this arbitrarily "
                           "high on a machine with limited WSL headroom.")
+    ap.add_argument("--resume", action="store_true",
+                     help="Skip any (module, file) task whose output TSV already exists "
+                          "with at least one data row, so a rerun after a failure only "
+                          "redoes what is missing. A row count that differs from the "
+                          "input's sequence count is logged as WARN but still skipped "
+                          "(some modules legitimately drop sequences). Default off.")
     args = ap.parse_args()
 
     if args.batch and (args.nt or args.aa):
@@ -977,12 +1021,16 @@ def main():
                 real_input = (_sanitize_aa_input(input_path, filtered_dir, log)
                               if spec["input"] == "aa" else input_path)
                 out_path = module_out_dir / f"{input_path.stem}.tsv"
+                if args.resume and _resume_skip(name, real_input, out_path, log):
+                    continue
                 tasks.append((name, real_input, out_path, resolved, ref))
         else:
             input_path = args.nt if spec["input"] == "nt" else args.aa
             real_input = (_sanitize_aa_input(input_path, filtered_dir, log)
                           if spec["input"] == "aa" else input_path)
             out_path = args.out_dir / f"{name}.tsv"
+            if args.resume and _resume_skip(name, real_input, out_path, log):
+                continue
             tasks.append((name, real_input, out_path, resolved, ref))
 
     def _run_one(task):

@@ -113,6 +113,22 @@ pool. Default `1` (sequential). A WSL-bridged module spawns one
 headroom. One failed task does not abort the rest of the batch, but
 the process still exits `1` if anything failed.
 
+### Rerunning after a failure: `--resume`
+
+```
+python run_features.py --modules composition,aggregation,disorder \
+    --batch species_fastas/ --out-dir outputs/ --jobs 8 --resume
+```
+
+Skips every `(module, file)` task whose output TSV already exists with
+at least one data row, so only failed or missing tasks run again. Each
+skip is printed and logged as `RESUME skip '<module>' on <file> (<rows>
+rows, input has <n>)`. A row count that differs from the input's
+sequence count is flagged `WARN` but still skipped, because some modules
+legitimately drop sequences. Delete an output to force that task to
+rerun. Modules write their final TSV only on success, so a crashed task
+leaves no file and reruns. Default off.
+
 ### Audit log
 
 Every invocation writes a plain-text log to

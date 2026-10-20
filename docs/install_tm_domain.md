@@ -13,6 +13,25 @@ printed to stderr. On an RTX A6000 this ran ~9x faster than CPU
 many `tm_domain` jobs in parallel: each one uses many cores, and
 concurrent runs compete for them.
 
+**GPU queue (Linux/macOS).** Each GPU run loads the ESM2-650M model
+(~4–8 GB of GPU memory). Several at once on one card run out of memory
+and crash. On a real 48 GB A6000 run, 10 concurrent jobs failed this way.
+So on `cuda`, `run_dtm2.py` now:
+
+1. takes an exclusive lock on `/tmp/seqmetrics_gpu.lock` (override with
+   `--gpu-lock` or `$SEQMETRICS_GPU_LOCK`). Any other SeqMetrics
+   tm_domain run waits its turn instead of crashing. The OS releases the
+   lock even if the process dies. The file is created world-writable so
+   other users' runs on a shared machine queue on the same lock.
+2. waits until `nvidia-smi` reports at least `--gpu-min-free-mb` free
+   (default 8000), checking every 60 s. This covers GPU jobs the lock
+   can't see, such as other users' or other tools'.
+
+Waiting is logged (`waiting for GPU lock`, `GPU free … MiB < … needed`).
+On failure only the last 40 lines of dtm2's stderr are kept (its
+progress bar otherwise fills the log), and an out-of-memory error adds a
+hint. CPU runs and Windows (no `fcntl`) skip the lock.
+
 **Isolated venv, not conda, not the system Python:**
 ```
 python -m venv .venvs/deeptmhmm2
