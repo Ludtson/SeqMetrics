@@ -148,6 +148,20 @@ legitimately drop sequences. Delete an output to force that task to
 rerun. Modules write their final TSV only on success, so a crashed task
 leaves no file and reruns. Default off.
 
+### Reproducibility across machines
+
+Results can depend on the tool versions used, and for the neural-network
+module (tm_domain: DeepTMHMM2 + ESM2) possibly also on the hardware (GPU vs
+CPU, CUDA/driver version), through floating-point differences. How much has
+not been measured yet; a cross-machine comparison is planned.
+
+Recommended practice until then:
+- Run everything that feeds one analysis with the same SeqMetrics commit
+  and the same environments. Every run's tool versions are recorded in the
+  audit log below.
+- When results come from more than one machine, compare a shared subset
+  of sequences and report how many outputs agree.
+
 ### Audit log
 
 Every invocation writes a plain-text log to
