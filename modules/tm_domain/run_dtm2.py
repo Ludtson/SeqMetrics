@@ -16,6 +16,7 @@ Usage:
 """
 
 import argparse
+import collections
 import contextlib
 import csv
 import os
@@ -39,6 +40,37 @@ STDERR_TAIL_LINES = 40
 # U = selenocysteine, O = pyrrolysine. Applied to the copy fed to dtm2 only;
 # each protein's number of replaced residues is reported in the output.
 AMBIGUOUS = {"J": "L", "B": "N", "Z": "Q", "U": "C", "O": "K"}
+
+
+def run_with_progress(cmd, progress_path, every_s=30):
+    """Run dtm2, writing its current progress line (tqdm, e.g. 'Predicting: 52% 12400/23612')
+    to progress_path at most every `every_s` seconds, so a long run can be followed with
+    `cat`. Returns (returncode, last STDERR_TAIL_LINES lines of stderr) -- dtm2's stderr is
+    one tqdm update per line (~30k for a proteome), so only the tail is kept for errors."""
+    tail = collections.deque(maxlen=STDERR_TAIL_LINES)
+    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, bufsize=1)
+    last_write, buf = 0.0, ""
+
+    def note(line, force=False):
+        nonlocal last_write
+        if line.strip():
+            tail.append(line)
+            now = time.time()
+            if force or now - last_write >= every_s:
+                with open(progress_path, "w", newline="\n") as f:
+                    f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}  {line.strip()}\n")
+                last_write = now
+
+    while True:
+        ch = proc.stderr.read(1)
+        if not ch:
+            break
+        if ch in "\r\n":  # tqdm redraws with \r
+            note(buf); buf = ""
+        else:
+            buf += ch
+    note(buf, force=True)
+    return proc.wait(), list(tail)
 
 
 def write_standardized(src, dest):
@@ -203,17 +235,17 @@ def main():
                   + ", ".join(f"{a}->{b}" for a, b in AMBIGUOUS.items()), file=sys.stderr)
         cmd = [args.dtm2, str(std_input), tmp, "--device", device]
         slot = gpu_slot(args.gpu_lock, args.gpu_min_free_mb) if device == "cuda" else contextlib.nullcontext()
+        progress_path = Path(str(args.out) + ".progress.log")
+        progress_path.parent.mkdir(parents=True, exist_ok=True)
+        print(f"[run_dtm2] progress: {progress_path}", file=sys.stderr)
         with slot:
-            result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            # dtm2's stderr includes a tqdm bar (one line per update -- ~30k
-            # lines for a proteome); only the tail holds the actual error.
-            tail = result.stderr.splitlines()[-STDERR_TAIL_LINES:]
+            returncode, tail = run_with_progress(cmd, progress_path)
+        if returncode != 0:
             sys.stderr.write("\n".join(tail) + "\n")
-            if "OutOfMemoryError" in result.stderr:
+            if any("OutOfMemoryError" in t for t in tail):
                 sys.stderr.write("[run_dtm2] hint: GPU out of memory -- another GPU job may be running; "
                                  "raise --gpu-min-free-mb or use --device cpu\n")
-            sys.exit(f"ERROR: dtm2 failed (exit {result.returncode})")
+            sys.exit(f"ERROR: dtm2 failed (exit {returncode})")
 
         gff3 = Path(tmp) / "TMRs.gff3"
         membrane_tsv = Path(tmp) / "membrane_types.tsv"

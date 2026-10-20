@@ -32,6 +32,12 @@ On failure only the last 40 lines of dtm2's stderr are kept (its
 progress bar otherwise fills the log), and an out-of-memory error adds a
 hint. CPU runs and Windows (no `fcntl`) skip the lock.
 
+**Following a long run.** dtm2's progress bar goes to
+`<output>.progress.log` (e.g. `tm_domain.tsv.progress.log`), rewritten at
+most every 30 s with a timestamp and the current status line, e.g.
+`Predicting: 52% 12400/23612`. Use `cat` on it. On failure, the last 40
+lines of dtm2's stderr are shown.
+
 **Ambiguity codes.** DeepTMHMM2's encoder knows only the standard amino
 acids and crashes on IUPAC ambiguity codes (`KeyError: 'J'`). Some NCBI
 proteomes contain them. `run_dtm2.py` therefore feeds dtm2 a copy in which
