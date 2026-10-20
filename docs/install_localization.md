@@ -37,7 +37,9 @@ itself, per its own redistribution policy.
    ln -s $(which pepstats) <LOCALIZER>/Scripts/EMBOSS-6.5.7/emboss/pepstats
    ```
 6. **Patch for parallel runs** — needed when running several
-   species at once (`--jobs` > 1). Concurrent Java processes collide
+   species at once (`--jobs` > 1), and for chunked runs with
+   `--chunk-jobs` > 1 (the default is 4, see "Chunked runs" below).
+   Without it, use `--chunk-jobs 1`. Concurrent Java processes collide
    on Java's shared performance-data folder in `/tmp`, and the losing
    process prints a warning into WEKA's output. `parse_weka_output()`
    in `localization.py` skips exactly 5 header lines, so that extra
@@ -82,6 +84,37 @@ python run_localizer.py proteins.faa \
 
 Same path via `run_features.py`: `--module-ref localization=../LOCALIZER/Scripts/LOCALIZER.py`
 (or the absolute equivalent, `<SeqMetrics's parent dir>/LOCALIZER/Scripts/LOCALIZER.py`).
+
+### Chunked runs: progress, resume, parallel
+
+LOCALIZER itself takes the whole FASTA in one call and writes nothing
+until it finishes. On a full proteome (30–50k proteins) that meant
+hours with no sign of progress, and a crash lost everything. So
+`run_localizer.py` now splits the input into chunks and runs LOCALIZER
+on each:
+
+```
+python run_localizer.py proteins.faa --localizer-script ... --output OUTDIR \
+    --localizer-parser localizer_bin.py --chunk-size 2000 --chunk-jobs 4
+```
+
+- **Progress:** one line per finished chunk on stderr, e.g.
+  `PROGRESS 5/16 chunks (10000/30401 seqs) | elapsed 22.0 min | ETA 48.0 min`.
+- **Resume:** chunks live in `OUTDIR/chunks/`. A finished chunk gets a
+  `.done` marker, and a rerun with the same input and chunk size skips
+  it. Through `run_features.py` the scratch dir is kept after a failure,
+  so rerunning the same command (or adding `--resume`) continues from
+  the last finished chunk.
+- **Parallel:** `--chunk-jobs N` chunks at once (default 4). This needs
+  the parallel-run patch, step 6 above.
+- **Same output:** chunk results are joined in input order into the
+  usual `<stem>.localizer.raw.txt`, then parsed once. Output is identical
+  to a single call. LOCALIZER scores each protein on its own, so the
+  chunk boundaries don't affect results.
+- **Failures:** a failing chunk stops the run with a non-zero exit, and
+  no merged output is written. Its stderr is in
+  `chunks/chunk_NNNNN.stderr.log`.
+- `--chunk-size 0` restores the old single call.
 
 Output columns: `ID, CLS_binary_0no_1yes, MLS_binary_0no_1yes,
 NLS_binary_0no_1yes, CLS_prob, MLS_prob, NLS_motif`. NLS is
