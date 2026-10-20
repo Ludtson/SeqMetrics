@@ -251,7 +251,7 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 # Run summary header
 # ----------------------------------
 run_start = datetime.now()
-with open(SUMMARY_FILE, "w") as s:
+with open(SUMMARY_FILE, "w", newline="\n") as s:
     s.write(f"Run started: {run_start}\n")
     s.write(f"Input FASTA: {FASTA}\n")
     s.write(f"Work dir: {WORK_DIR}\n")
@@ -442,7 +442,7 @@ with ProcessPoolExecutor(max_workers=args.jobs) as exe:
             )
 
 if failures:
-    with open(FAILURES_LOG, "w") as f:
+    with open(FAILURES_LOG, "w", newline="\n") as f:
         for seqn, err in failures:
             f.write(f"{seqn}\t{id_to_original.get(seqn, seqn)}\t{err}\n")
     log(f"WARNING {len(failures)} sequences failed TANGO — see {FAILURES_LOG}")
@@ -462,7 +462,7 @@ with open(OUT_TSV, "w", newline="\n") as out:
         out.write(f"{orig_id}\t{hca[seqn]}\t{row}\n")
 
 run_end = datetime.now()
-with open(SUMMARY_FILE, "a") as s:
+with open(SUMMARY_FILE, "a", newline="\n") as s:
     s.write(f"\nTotal sequences: {len(records)}\n")
     s.write(f"Skipped (no HCA score): {skipped_no_hca}\n")
     s.write(f"TANGO attempted: {total}\n")

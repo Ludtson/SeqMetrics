@@ -203,7 +203,8 @@ def main(args):
             # input delimiter (CSV in, CSV+CSV mixed, whatever) to match
             # this project's own convention, which is TSV throughout --
             # not just "match whatever the base file happened to be."
-            writer = csv.DictWriter(outfile, fieldnames=final_headers, extrasaction='ignore', delimiter="\t")
+            writer = csv.DictWriter(outfile, fieldnames=final_headers, extrasaction='ignore', delimiter="\t",
+                                    lineterminator="\n")  # LF only, like every other output in this repo
             writer.writeheader()
 
             processed_count = 0

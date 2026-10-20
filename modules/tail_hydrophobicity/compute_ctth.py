@@ -125,7 +125,8 @@ def main():
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with args.out.open("w", newline="") as out:
         writer = csv.DictWriter(
-            out, fieldnames=["Seq_ID", "Length", "CTTH_30", "CTTH_25", "Tail5_charge"], delimiter="\t"
+            out, fieldnames=["Seq_ID", "Length", "CTTH_30", "CTTH_25", "Tail5_charge"], delimiter="\t",
+            lineterminator="\n",  # csv defaults to \r\n on every OS
         )
         writer.writeheader()
         for sid in sorted(rows):

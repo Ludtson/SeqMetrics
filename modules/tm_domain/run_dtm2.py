@@ -195,11 +195,11 @@ def main():
         all_membrane_cols = sorted({col for v in membrane_probs.values() for col in v})
 
         args.out.parent.mkdir(parents=True, exist_ok=True)
-        # newline="\n": same CRLF-safety discipline as every other module in
-        # this repo -- this table's Seq_ID gets joined by exact match against
-        # other feature tables downstream.
+        # LF only: this table's Seq_ID gets joined by exact match against other
+        # feature tables downstream. newline="\n" alone is not enough -- csv.writer
+        # writes its own \r\n terminator on every OS unless lineterminator is set.
         with open(args.out, "w", newline="\n") as f:
-            writer = csv.writer(f, delimiter="\t")
+            writer = csv.writer(f, delimiter="\t", lineterminator="\n")
             header = (["Seq_ID", "N_TMRs"]
                        + [f"Residues_{label}" for label in all_topology_labels]
                        + [f"MembraneProb_{col.replace(' ', '_')}" for col in all_membrane_cols])

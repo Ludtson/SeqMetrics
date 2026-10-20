@@ -590,7 +590,7 @@ def run_module(name, input_path, out_path, resolved, ref_dir=None, pythonpath_by
         produced = scratch_dir / f"{species}_indices.out"
         if not produced.exists():
             raise FileNotFoundError(f"codon_usage produced no output at {produced}")
-        shutil.move(str(produced), str(out_path))
+        _clean_codonw_table(produced, out_path)
         shutil.rmtree(scratch_dir, ignore_errors=True)
 
     elif name == "coding_potential":
@@ -718,6 +718,20 @@ def run_module(name, input_path, out_path, resolved, ref_dir=None, pythonpath_by
 
 
 EXT_FOR_INPUT = {"nt": ".fna", "aa": ".faa"}
+
+
+def _clean_codonw_table(src, dest):
+    """codonW pads the ID column ('title') with spaces to a fixed width and
+    ends every row with a tab (an empty last column). Both break exact-ID
+    joins against the other modules' tables, so write a clean copy: every
+    field stripped, trailing empty fields dropped, LF line endings."""
+    with open(src, newline="") as inp, open(dest, "w", newline="\n") as out:
+        for line in inp:
+            fields = [f.strip() for f in line.rstrip("\r\n").split("\t")]
+            while fields and fields[-1] == "":
+                fields.pop()
+            if fields:
+                out.write("\t".join(fields) + "\n")
 
 
 def _existing_rows(path):

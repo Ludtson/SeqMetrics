@@ -49,7 +49,8 @@ def main():
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with args.out.open("w", newline="") as out:
-        w = csv.DictWriter(out, fieldnames=["Seq_ID", "Length_nt", "GC_pct"], delimiter="\t")
+        w = csv.DictWriter(out, fieldnames=["Seq_ID", "Length_nt", "GC_pct"], delimiter="\t",
+                           lineterminator="\n")  # csv defaults to \r\n on every OS
         w.writeheader()
         for sid in sorted(rows):
             row = {"Seq_ID": sid}

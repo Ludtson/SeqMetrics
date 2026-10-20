@@ -39,7 +39,7 @@ def split_fasta(fasta: Path, chunk_dir: Path, chunk_size: int):
                         out.close(); chunks.append((path, n))
                     idx += 1; n = 0
                     path = chunk_dir / f"chunk_{idx:05d}.faa"
-                    out = path.open("w")
+                    out = path.open("w", newline="\n")
                 n += 1
             if out:
                 out.write(line)
@@ -74,7 +74,7 @@ def run_chunked(base_cmd, fasta: Path, outdir: Path, raw_out: Path, chunk_size: 
             report(n)
             return
         tmp = chunk.with_suffix(".raw.part")
-        with tmp.open("w") as out, chunk.with_suffix(".stderr.log").open("w") as err:
+        with tmp.open("w", newline="\n") as out, chunk.with_suffix(".stderr.log").open("w", newline="\n") as err:
             subprocess.run(base_cmd + ["-i", str(chunk)], check=True, stdout=out, stderr=err)
         tmp.replace(raw)
         done.touch()
@@ -84,7 +84,7 @@ def run_chunked(base_cmd, fasta: Path, outdir: Path, raw_out: Path, chunk_size: 
           file=sys.stderr, flush=True)
     with ThreadPoolExecutor(max_workers=max(1, chunk_jobs)) as pool:
         list(pool.map(one, chunks))  # list() re-raises the first chunk failure
-    with raw_out.open("w") as out:
+    with raw_out.open("w", newline="\n") as out:
         for chunk, _ in chunks:
             out.write(chunk.with_suffix(".raw.txt").read_text())
 
@@ -206,7 +206,7 @@ def main():
         if args.chunk_size > 0:
             run_chunked(base_cmd, fasta, outdir, raw_out, args.chunk_size, args.chunk_jobs)
         else:
-            with raw_out.open("w") as out, stderr_log.open("w") as err:
+            with raw_out.open("w", newline="\n") as out, stderr_log.open("w", newline="\n") as err:
                 subprocess.run(cmd, check=True, stdout=out, stderr=err)
 
     if not args.no_binary:

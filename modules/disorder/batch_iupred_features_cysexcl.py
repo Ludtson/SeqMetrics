@@ -360,7 +360,7 @@ def process_single_file(fasta_path: str, output_path: str, config: Dict[str, Any
         if all_feats:
             keys = all_feats[0].keys()
             with open(output_path, 'w', newline='') as csvfile:
-                writer = csv.DictWriter(csvfile, fieldnames=keys, delimiter='\t')
+                writer = csv.DictWriter(csvfile, fieldnames=keys, delimiter='\t', lineterminator='\n')
                 writer.writeheader()
                 writer.writerows(all_feats)
         
@@ -478,7 +478,7 @@ def main():
             log(f"Writing concatenated master file to {master_file}...")
             keys = all_results_flat[0].keys()
             with open(master_file, 'w', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=keys, delimiter='\t')
+                writer = csv.DictWriter(f, fieldnames=keys, delimiter='\t', lineterminator='\n')
                 writer.writeheader()
                 writer.writerows(all_results_flat)
         elif args.concat:

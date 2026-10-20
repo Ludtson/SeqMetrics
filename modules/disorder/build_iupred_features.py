@@ -303,6 +303,7 @@ def main():
         pd.DataFrame().to_csv(
             out_path,
             sep="\t" if out_path.suffix.lower() in (".tsv", ".txt") else ",",
+            lineterminator="\n",  # pandas otherwise uses the OS line ending (\r\n on Windows)
         )
         return
 
@@ -350,9 +351,9 @@ def main():
     feat_df = pd.DataFrame(feats).set_index("protein_id")
 
     if out_path.suffix.lower() in (".tsv", ".txt"):
-        feat_df.to_csv(out_path, sep="\t")
+        feat_df.to_csv(out_path, sep="\t", lineterminator="\n")
     else:
-        feat_df.to_csv(out_path, sep=",")
+        feat_df.to_csv(out_path, sep=",", lineterminator="\n")
 
     log(f"Wrote features to {out_path}")
     log("Finished build_iupred_features.py")

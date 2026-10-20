@@ -63,7 +63,7 @@ def parse_localizer(input_path: Path, output_path: Path):
     }
 
     with input_path.open("r", newline="") as inf, output_path.open("w", newline="") as outf:
-        writer = csv.writer(outf, delimiter="\t")
+        writer = csv.writer(outf, delimiter="\t", lineterminator="\n")  # csv defaults to \r\n on every OS
 
         # Output is standardized for downstream merges.
         writer.writerow(
