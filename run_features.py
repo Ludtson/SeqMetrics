@@ -756,6 +756,66 @@ def _fasta_records(path):
     return _seq_count_cache[key]
 
 
+DUMMY_PREFIX = "SMID"
+_DUMMY_RE = re.compile(DUMMY_PREFIX + r"(\d{7,})(?![0-9])", re.IGNORECASE)
+
+
+def _fasta_ids(path):
+    """First whitespace token of every header, in file order."""
+    with open(path) as f:
+        return [line[1:].split()[0] for line in f if line.startswith(">") and line[1:].split()]
+
+
+def _build_id_map(paths, map_path):
+    """One dummy ID per original ID across a group of inputs (a protein FASTA and
+    its CDS FASTA share the map, so the same gene gets the same dummy in both).
+    Deterministic (first appearance order) so --resume runs stay consistent.
+    Dummies are letters + digits (SMID0000001), never purely numeric: tools like
+    pandas/R/Excel turn 0000001 into the number 1."""
+    order, seen = [], set()
+    for p in paths:
+        for i in _fasta_ids(p):
+            if i not in seen:
+                seen.add(i); order.append(i)
+    width = max(7, len(str(len(order))))
+    fwd = {orig: f"{DUMMY_PREFIX}{n:0{width}d}" for n, orig in enumerate(order, 1)}
+    map_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(map_path, "w", newline="\n") as f:
+        f.write("dummy_id\toriginal_id\n")
+        for orig, dummy in fwd.items():
+            f.write(f"{dummy}\t{orig}\n")
+    return fwd
+
+
+def _remap_fasta(src, fwd, remap_dir):
+    """Copy of src with dummy IDs as headers, same file name (codon_usage derives
+    the species from it)."""
+    remap_dir.mkdir(parents=True, exist_ok=True)
+    dest = remap_dir / src.name
+    with open(src) as inp, open(dest, "w", newline="\n") as out:
+        for line in inp:
+            if line.startswith(">"):
+                tok = line[1:].split()
+                out.write(f">{fwd[tok[0]]}\n" if tok else line)
+            else:
+                out.write(line.rstrip("\r\n") + "\n")
+    return dest
+
+
+def _restore_ids(out_path, back):
+    """Replace every dummy ID token in a module output with the original ID --
+    module-agnostic, so it also catches tools that upper-case IDs (CPAT) or add
+    suffixes (CPAT's '_ORF_1'), whatever column the ID sits in."""
+    width = len(next(iter(back))) - len(DUMMY_PREFIX) if back else 7
+    def sub(m):
+        key = f"{DUMMY_PREFIX}{int(m.group(1)):0{width}d}"
+        return back.get(key, m.group(0))
+    with open(out_path, newline="") as f:
+        text = f.read()
+    with open(out_path, "w", newline="") as f:
+        f.write(_DUMMY_RE.sub(sub, text))
+
+
 def _resume_skip(name, input_path, out_path, log):
     """True if --resume should skip this task: its output already holds at
     least one data row. Modules only write their final TSV on success, so a
@@ -896,6 +956,12 @@ def main():
                           "redoes what is missing. A row count that differs from the "
                           "input's sequence count is logged as WARN but still skipped "
                           "(some modules legitimately drop sequences). Default off.")
+    ap.add_argument("--no-remap", action="store_true",
+                     help="Feed modules the original sequence IDs instead of short dummy IDs. "
+                          "By default every input gets dummy IDs (SMID0000001...) before any "
+                          "module runs and the originals are restored in every output -- some "
+                          "tools cut IDs at '|' (aggregation) or truncate long names (codonW). "
+                          "The map is kept in <out_dir>/_id_map/.")
     args = ap.parse_args()
 
     if args.batch and (args.nt or args.aa):
@@ -987,9 +1053,22 @@ def main():
 
     # Flat list of independent (module, file) tasks across every requested,
     # ready module -- built up front so --jobs can run all of them through
-    # one worker pool, not one pool per module. Each tuple is exactly
-    # run_module()'s own argument shape plus a label for reporting.
+    # one worker pool, not one pool per module. Each tuple is run_module()'s
+    # own argument shape plus the dummy->original ID map for restoring output.
     tasks = []
+    id_maps = {}  # group key -> (forward map, reverse map); built once per group
+
+    def _prepare_ids(key, group_files, real_input):
+        """Return (file to feed the module, reverse map). With --no-remap the
+        module gets the real input and nothing is restored."""
+        if args.no_remap:
+            return real_input, None
+        if key not in id_maps:
+            fwd = _build_id_map(group_files, args.out_dir / "_id_map" / f"{key}.tsv")
+            id_maps[key] = (fwd, {v: k for k, v in fwd.items()})
+            log.write(f"ID remap '{key}': {len(fwd)} IDs -> {args.out_dir / '_id_map' / (key + '.tsv')}")
+        fwd, back = id_maps[key]
+        return _remap_fasta(real_input, fwd, args.out_dir / "_remapped" / key), back
 
     for name in requested:
         spec = MODULES[name]
@@ -1037,7 +1116,11 @@ def main():
                 out_path = module_out_dir / f"{input_path.stem}.tsv"
                 if args.resume and _resume_skip(name, real_input, out_path, log):
                     continue
-                tasks.append((name, real_input, out_path, resolved, ref))
+                group = [p for p in (args.batch / f"{input_path.stem}.faa", args.batch / f"{input_path.stem}.fna")
+                         if p.exists()]
+                group = [_sanitize_aa_input(p, filtered_dir, log) if p.suffix == ".faa" else p for p in group]
+                feed, back = _prepare_ids(input_path.stem, group, real_input)
+                tasks.append((name, feed, out_path, resolved, ref, back))
         else:
             input_path = args.nt if spec["input"] == "nt" else args.aa
             real_input = (_sanitize_aa_input(input_path, filtered_dir, log)
@@ -1045,7 +1128,9 @@ def main():
             out_path = args.out_dir / f"{name}.tsv"
             if args.resume and _resume_skip(name, real_input, out_path, log):
                 continue
-            tasks.append((name, real_input, out_path, resolved, ref))
+            group = ([_sanitize_aa_input(args.aa, filtered_dir, log)] if args.aa else []) + ([args.nt] if args.nt else [])
+            feed, back = _prepare_ids("_single", group, real_input)
+            tasks.append((name, feed, out_path, resolved, ref, back))
 
     def _run_one(task):
         # run_module() raises (CalledProcessError, FileNotFoundError,
@@ -1056,9 +1141,11 @@ def main():
         # the whole batch and lose visibility into every other task still
         # in flight, exactly when --jobs matters most (many species at
         # once). Catch here and report as a normal failed result instead.
-        name, input_path, out_path, resolved, ref = task
+        name, input_path, out_path, resolved, ref, back = task
         try:
             ok = run_module(name, input_path, out_path, resolved, ref, pythonpath_by_module)
+            if ok and back and out_path.exists():
+                _restore_ids(out_path, back)
         except Exception as e:
             return name, input_path, out_path, False, str(e)
         return name, input_path, out_path, ok, None

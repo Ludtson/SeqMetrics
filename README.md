@@ -113,6 +113,25 @@ pool. Default `1` (sequential). A WSL-bridged module spawns one
 headroom. One failed task does not abort the rest of the batch, but
 the process still exits `1` if anything failed.
 
+### Sequence IDs: remapped by default (`--no-remap` to turn off)
+
+Some tools mangle long or unusual IDs. HCA/TANGO's ID restore cut
+`Athaliana|Chr1|147|261|+|0` at the first `|`, and codonW truncates long
+names. So before any module runs, every input gets short dummy IDs
+(`SMID0000001` …). Every output then has its original IDs restored.
+
+- A protein FASTA and its CDS FASTA share one map (per input group: the
+  whole run in single-file mode, one map per file name in batch mode), so
+  the same gene gets the same dummy in both.
+- Dummies are letters plus digits, never purely numeric, because
+  pandas/R/Excel would turn `0000001` into `1`.
+- The restore is module-agnostic. It replaces any dummy token anywhere in
+  an output, which also covers CPAT upper-casing IDs and adding `_ORF_1`.
+- The maps are kept in `<out_dir>/_id_map/<group>.tsv` and the remapped
+  inputs in `<out_dir>/_remapped/`. Maps are deterministic (input order),
+  so `--resume` runs stay consistent.
+- `--no-remap` feeds modules the original IDs, which was the old behaviour.
+
 ### Rerunning after a failure: `--resume`
 
 ```
