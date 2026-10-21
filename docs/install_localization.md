@@ -115,6 +115,25 @@ python run_localizer.py proteins.faa --localizer-script ... --output OUTDIR \
   no merged output is written. Its stderr is in
   `chunks/chunk_NNNNN.stderr.log`.
 - `--chunk-size 0` restores the old single call.
+- **CPU cap (`--java-cpus`, default 1):** each Java (WEKA) process
+  LOCALIZER starts would otherwise size its garbage-collector and
+  compiler threads to every core of the machine, so N chunks use far
+  more than N cores. On a 128-core machine, 8 input files × 4 chunks
+  reached about 170 cores. The wrapper now sets
+  `JAVA_TOOL_OPTIONS="-XX:ActiveProcessorCount=1 -XX:+UseSerialGC"` for
+  every LOCALIZER call. Expect about `chunk-jobs × java-cpus` cores per
+  input file, plus short pepstats/perl steps. `--java-cpus 0` turns the
+  cap off. The JVM announces `JAVA_TOOL_OPTIONS` with one line on stderr,
+  which LOCALIZER mixes into WEKA's output. The parser patch (step 6)
+  skips that line, so the cap is applied only when `localization.py`
+  carries the patch; otherwise the run prints a warning and goes ahead
+  uncapped. To check that a JVM honours the flags:
+  `JAVA_TOOL_OPTIONS="-XX:ActiveProcessorCount=1" java -XX:+PrintFlagsFinal -version | grep ActiveProcessorCount`.
+- **Whole-machine budget:** the cap limits each process, not the machine.
+  On a shared machine, also bound the whole run, e.g.
+  `taskset -c 0-31 nice -n 10 python run_features.py ...`, and count every
+  other job already running before choosing how many files run in
+  parallel.
 
 Output columns: `ID, CLS_binary_0no_1yes, MLS_binary_0no_1yes,
 NLS_binary_0no_1yes, CLS_prob, MLS_prob, NLS_motif`. NLS is

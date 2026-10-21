@@ -8,6 +8,7 @@ pepstats (EMBOSS), and Perl are installed together.
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -49,7 +50,7 @@ def split_fasta(fasta: Path, chunk_dir: Path, chunk_size: int):
     return chunks
 
 
-def run_chunked(base_cmd, fasta: Path, outdir: Path, raw_out: Path, chunk_size: int, chunk_jobs: int):
+def run_chunked(base_cmd, fasta: Path, outdir: Path, raw_out: Path, chunk_size: int, chunk_jobs: int, env=None):
     """Run LOCALIZER chunk by chunk (chunk_jobs at a time), print a PROGRESS
     line after each, skip chunks already finished (.done marker), then join
     the chunk outputs in order into raw_out. LOCALIZER itself only writes
@@ -75,7 +76,7 @@ def run_chunked(base_cmd, fasta: Path, outdir: Path, raw_out: Path, chunk_size: 
             return
         tmp = chunk.with_suffix(".raw.part")
         with tmp.open("w", newline="\n") as out, chunk.with_suffix(".stderr.log").open("w", newline="\n") as err:
-            subprocess.run(base_cmd + ["-i", str(chunk)], check=True, stdout=out, stderr=err)
+            subprocess.run(base_cmd + ["-i", str(chunk)], check=True, stdout=out, stderr=err, env=env)
         tmp.replace(raw)
         done.touch()
         report(n)
@@ -87,6 +88,31 @@ def run_chunked(base_cmd, fasta: Path, outdir: Path, raw_out: Path, chunk_size: 
     with raw_out.open("w", newline="\n") as out:
         for chunk, _ in chunks:
             out.write(chunk.with_suffix(".raw.txt").read_text())
+
+
+def java_env(localizer_script: Path, java_cpus: int):
+    """Environment that caps the CPU threads of every Java (WEKA) process LOCALIZER starts.
+    Without a cap, each JVM sizes its garbage-collector and JIT thread pools to ALL cores of the
+    machine, so N parallel chunks use far more than N cores (8 sets x 4 chunks reached ~170 cores
+    on a 128-core workstation). -XX:ActiveProcessorCount makes the JVM act as if it had
+    `java_cpus` cores; -XX:+UseSerialGC removes the parallel GC threads.
+    The JVM announces JAVA_TOOL_OPTIONS with one line on stderr, which LOCALIZER mixes into
+    WEKA's output; only the parser patch in docs/install_localization.md skips it. So the cap
+    is applied only when localization.py carries that patch; otherwise (None, reason)."""
+    if java_cpus <= 0:
+        return None, "java CPU cap off (--java-cpus 0)"
+    loc_py = localizer_script.parent / "localization.py"
+    try:
+        patched = "line.split()[0].isdigit()" in loc_py.read_text()
+    except OSError:
+        patched = False
+    if not patched:
+        return None, (f"WARNING: java CPU cap NOT applied: {loc_py} lacks the parser patch from "
+                      "docs/install_localization.md; each JVM may use every core")
+    opts = f"-XX:ActiveProcessorCount={java_cpus} -XX:+UseSerialGC"
+    env = dict(os.environ)
+    env["JAVA_TOOL_OPTIONS"] = (env.get("JAVA_TOOL_OPTIONS", "") + " " + opts).strip()
+    return env, f"java CPU cap: JAVA_TOOL_OPTIONS={env['JAVA_TOOL_OPTIONS']}"
 
 
 def check_dependencies(localizer_script: Path):
@@ -162,6 +188,14 @@ def main():
         help="Chunks run at the same time (default 4). Needs the parallel-run patch "
              "from docs/install_localization.md when > 1",
     )
+    parser.add_argument(
+        "--java-cpus",
+        type=int,
+        default=1,
+        help="CPU threads each Java (WEKA) process may use (default 1; 0 = no cap). Total load is "
+             "about chunk-jobs x java-cpus per input file. Needs the parser patch from "
+             "docs/install_localization.md; skipped with a warning without it",
+    )
     parser.add_argument("--check", action="store_true", help="Dependency check only")
     parser.add_argument("--dry-run", action="store_true", help="Print commands only")
     parser.add_argument("--quiet", action="store_true", help="Minimal console output")
@@ -199,15 +233,17 @@ def main():
             base_cmd.extend(["-S", str(args.signal_peptide_length)])
     cmd = base_cmd + ["-i", str(fasta)]
 
+    env, env_msg = java_env(localizer_script, args.java_cpus)
+    print(env_msg, file=sys.stderr, flush=True)
     log("STEP LOCALIZER predict", args.quiet)
     log("CMD: " + " ".join(cmd) + (f"  [chunked: {args.chunk_size} seqs, {args.chunk_jobs} at a time]"
                                     if args.chunk_size > 0 else ""), args.quiet)
     if not args.dry_run:
         if args.chunk_size > 0:
-            run_chunked(base_cmd, fasta, outdir, raw_out, args.chunk_size, args.chunk_jobs)
+            run_chunked(base_cmd, fasta, outdir, raw_out, args.chunk_size, args.chunk_jobs, env)
         else:
             with raw_out.open("w", newline="\n") as out, stderr_log.open("w", newline="\n") as err:
-                subprocess.run(cmd, check=True, stdout=out, stderr=err)
+                subprocess.run(cmd, check=True, stdout=out, stderr=err, env=env)
 
     if not args.no_binary:
         parser_script = Path(args.localizer_parser).expanduser().resolve()
