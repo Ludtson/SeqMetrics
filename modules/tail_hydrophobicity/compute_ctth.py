@@ -2,53 +2,20 @@
 """
 compute_ctth.py
 
-C-terminal tail hydrophobicity (CTTH), unbundled from the HTLCP pipeline
-(E:\\features-rebirth.zip -> htlcp/src/hcaTango-pipeline/bin/run_htlc_pipeline.py,
-compute_ctth(), lines 26-95 of that file).
+C-terminal tail hydrophobicity (CTTH) features from a protein FASTA.
+Pure Python, no external dependencies.
 
 Author:   Adekola Owoyemi, Casola Lab, TAMU
-Version:  0.1.0 (pre-release, unshared)
+Version:  0.1.0
 
---------------------------------------------------------------------------
-WHY THIS IS ITS OWN MODULE
---------------------------------------------------------------------------
-The original HTLCP pipeline bundles CTTH alongside HCA/TANGO, LOCALIZER,
-and a pepstats orchestrator behind one shared virtual environment — a
-~6GB zip when moved between machines, even though CTTH itself is pure
-Python with zero external dependencies (no hcatk, no tango binary, no
-Perl/LOCALIZER, no EMBOSS). Lifted out here as its own module, matching
-the same per-tool `pipeline/<tool>_extracted/` convention already used
-for hca_tango, pepstats, codonw, and iupred this project. The logic below
-is unchanged from the original (reviewed, not rewritten) — only the
-surrounding CLI/I-O is new, so this can run standalone on any real FASTA
-without the rest of the HTLCP bundle.
+Features (Kyte-Doolittle hydropathy):
+  CTTH_30       mean hydropathy of the last 30 residues (seq[-30:]).
+  CTTH_25       mean hydropathy of seq[-30:-5]: the 25 residues before the
+                terminal 5, not the last 25 residues.
+  Tail5_charge  net charge of the last 5 residues: (K + R) - (D + E).
 
---------------------------------------------------------------------------
-METHOD (matches manuscripts/Adekola_et_al_2025-6.v0.0_cc.docx methods text:
-"C-terminal tail hydrophobicity scores were obtained using the GRAVY
-calculator... in the C-terminal 30 amino acids... along the
-Kyte-Doolittle scale.")
---------------------------------------------------------------------------
-CTTH_30       : mean Kyte-Doolittle hydropathy over the last 30 residues
-                (seq[-30:]). This is the one that matches the manuscript's
-                stated definition exactly.
-CTTH_25       : mean Kyte-Doolittle hydropathy over seq[-30:-5] — NOT the
-                last 25 residues (that would be seq[-25:]). This is the
-                25 residues immediately BEFORE the terminal 5, i.e. the
-                "near-tail" window with the very end of the protein
-                deliberately excluded (the terminal 5 are analyzed
-                separately, below, for charge instead of hydrophobicity).
-                Worth being explicit about this in any methods write-up
-                that cites "CTTH_25" — the name reads as "last 25 aa,"
-                but the actual window is not that.
-Tail5_charge  : net charge (count of K+R minus count of D+E) over the
-                last 5 residues only.
-
-Proteins shorter than the window length are handled gracefully (Python
-slicing clamps rather than erroring); residues outside the 20 standard
-amino acids are silently excluded from the hydrophobicity average rather
-than treated as zero.
---------------------------------------------------------------------------
+Proteins shorter than a window use what is available. Non-standard residues
+are left out of the hydropathy mean.
 """
 
 import argparse

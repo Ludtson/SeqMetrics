@@ -49,20 +49,8 @@ _ORIID_RE = re.compile(r"OriID=([^\s\t]+)")
 
 
 def original_id_from_header(header: str) -> str:
-    # Bug fix (recurring): this project's B. rapa FASTA headers carry an
-    # internal accession as the first whitespace token (e.g.
-    # ">GWHTAAES000001  Protein=... OriID=BraA01g000010.3C.mRNA ...") --
-    # the real, canonical gene ID used everywhere else in this pipeline
-    # sits in an "OriID=" field further into the header, not in the first
-    # token. Without this check, restored IDs come back as the internal
-    # GWH accession instead of the real gene ID -- confirmed twice now:
-    # once in the original full-scale B. rapa CodonW run (fixed inline at
-    # the time, not saved back here), and again when recovering B. rapa's
-    # missing genes, which silently repeated the exact same bug because
-    # the inline fix never made it into this script. Same OriID=
-    # extraction already used in pepstats_v2_extracted/remap_pepstats_ids.py's
-    # fasta_id_brassica_rapa() -- kept consistent with that logic here so
-    # the two don't drift apart again.
+    # Some headers (e.g. CNCB GWH) start with an accession and carry the gene ID
+    # in an "OriID=" field; use that when present.
     m = _ORIID_RE.search(header)
     if m:
         oid = m.group(1)
@@ -74,16 +62,8 @@ def original_id_from_header(header: str) -> str:
     token = header.split()[0] if header.split() else ""
     if not token:
         raise ValueError("Encountered empty FASTA header identifier.")
-    # Bug fix: some headers (confirmed for this project's O. sativa CDS FASTA,
-    # e.g. "OSJAP01G00010.5|chromosome:IRGSP-1.0:1:1:...|oge_maker_genes|...")
-    # pack multiple pipe-delimited fields immediately after the ID with no
-    # whitespace before the first "|". Splitting on whitespace alone captured
-    # the entire pipe-chain as a single "token" instead of just the gene ID.
-    # Confirmed by direct inspection of a real production run's output before
-    # this fix: restored IDs were the full pipe-delimited string, not the
-    # clean gene ID. Splitting on "|" here is a no-op for headers that don't
-    # have this pattern (A. thaliana), since their first whitespace-token
-    # never itself contains a "|".
+    # Headers like "ID|chromosome:...|..." have no whitespace before the first
+    # "|"; keep only the part before it.
     token = token.split("|")[0]
     return token
 
@@ -94,11 +74,7 @@ def command_prepare(input_fasta: Path, output_fasta: Path, output_map: Path) -> 
     output_fasta.parent.mkdir(parents=True, exist_ok=True)
     output_map.parent.mkdir(parents=True, exist_ok=True)
 
-    # newline="\n" on both: output_fasta is fed straight to codonw as real
-    # sequence input (a stray CRLF from Windows Python text mode corrupts
-    # sequence lines, not just an ID lookup), and output_map's IDs get
-    # matched by exact string elsewhere -- same failure class as the
-    # confirmed CRLF/HEG-ID bug already found and fixed in this module.
+    # LF only: CR characters would corrupt sequence lines and exact-ID matches.
     with output_fasta.open("w", encoding="utf-8", newline="\n") as fasta_out, output_map.open(
         "w", encoding="utf-8", newline="\n"
     ) as map_out:
@@ -146,17 +122,8 @@ def restore_file(mapping: Dict[str, str], file_path: Path) -> None:
             restored_lines.append(line)
             continue
 
-        # Bug fix: previously used stripped.split(None, 1), which finds the
-        # first token correctly but discards what the ORIGINAL delimiter
-        # after it was (tab, space, multiple spaces...). Reconstructing with
-        # a hard-coded " " silently turned every tab-delimited data row into
-        # a row where the ID and the first real column are space-joined
-        # instead of tab-separated — every column after that stays correctly
-        # tab-separated, so the corruption is invisible until something
-        # parses the file by splitting on tabs and gets misaligned columns.
-        # The header row was never affected (its first token is "title",
-        # which never matches a seqN key, so it's never rewritten) — which is
-        # exactly why this was easy to miss on a quick look.
+        # Keep the original delimiter after the first token (tab or spaces),
+        # so tab-separated rows stay aligned.
         match = _FIRST_TOKEN_RE.match(stripped)
         if match:
             first, delimiter, rest = match.group(1), match.group(2), match.group(3)
@@ -172,11 +139,7 @@ def restore_file(mapping: Dict[str, str], file_path: Path) -> None:
         else:
             restored_lines.append(line)
 
-    # newline="\n" for consistency with the other writes in this module --
-    # this is the final restored results table, so the risk here is lower
-    # (whatever reads it next is more likely Python/pandas, which tolerates
-    # CRLF), but there's no reason to leave one unprotected write in a module
-    # already confirmed to have this exact failure class.
+    # LF only, as for the other outputs of this module.
     with file_path.open("w", encoding="utf-8", newline="\n") as handle:
         handle.writelines(restored_lines)
 

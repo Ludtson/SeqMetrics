@@ -7,15 +7,12 @@ to install the whole panel to run one module.
 Two input modes -- pick whichever matches how your data is organized;
 neither is more "correct," they're just different groupings:
 
-  Single-file mode (this project's own usage -- one combined FASTA per
-  trim type, many sequences from many species pooled together):
+  Single-file mode (one FASTA, which may pool sequences from many species):
     python run_features.py --modules basic,tail_hydrophobicity \
         --nt combined.fna --aa combined.faa --out-dir outputs/
     -> outputs/<module>.tsv, one file per module
 
-  Batch mode (e.g. one FASTA per species, matching how the MLA-chapter
-  project organized its inputs -- SeqMetrics doesn't care what the
-  grouping IS, it just runs each module once per file in the directory):
+  Batch mode (e.g. one FASTA per species; each module runs once per file):
     python run_features.py --modules basic,codon_usage \
         --batch species_fastas/ --out-dir outputs/
     -> outputs/<module>/<input_filename_stem>.tsv, one per (module, file)
@@ -23,10 +20,8 @@ neither is more "correct," they're just different groupings:
     look for *.faa. A module is silently skipped for a batch dir with no
     matching files, not an error -- lets one dir serve both input types.
 
-Either way, how you got your data into a FASTA with sane headers (e.g.
-this project's stage5_build_inputs.py, or a per-species DATA dict like
-the old project used) is YOUR project's own adapter step, not SeqMetrics'
-job -- kept out of this tool on purpose.
+Preparing the input FASTA files is left to the user; SeqMetrics does not
+reformat or split them.
 
 --modules is comma-separated. See README.md for the full module list and
 docs/install_<module>.md for what each one actually needs installed.
@@ -70,11 +65,9 @@ PYMODULE_REQUIRES = {
 
 # Modules whose real dependency lives in a plain python venv (not a conda
 # env, and not on bare PATH) -- resolved via resolve_venv() instead of
-# resolve_binary(). DeepTMHMM2's dependency stack (torch, fair-esm, etc.)
-# was deliberately isolated in its own venv this session after an earlier
-# `pip install` without an active env silently upgraded numpy/pandas/
-# biopython/matplotlib in the SYSTEM python -- see DECISIONS-equivalent
-# note in docs/install_tm_domain.md.
+# resolve_binary(). DeepTMHMM2's dependencies (torch, fair-esm, ...) live in
+# their own venv so they cannot change packages in the system Python
+# (see docs/install_tm_domain.md).
 VENV_REQUIRES = {
     "tm_domain": "dtm2",
 }
@@ -94,28 +87,22 @@ DEFAULT_CONDA_ENVS = {
 }
 
 # The documented default venv PATH per binary -- see docs/install_<module>.md.
-# Relative to this script's own directory, so it works regardless of the
-# caller's cwd (same reasoning as every other absolute-path fix this session).
+# Relative to this script's directory, so it works from any working directory.
 DEFAULT_VENVS = {
     "dtm2": str(HERE / ".venvs" / "deeptmhmm2"),
 }
 
 # iupred3_lib isn't pip-installable -- it's two files a user obtains directly
 # from the authors (see docs/install_disorder.md) and drops somewhere on
-# PYTHONPATH. This is the documented default location inside the WSL conda
-# env this lab already uses; `~` is expanded by the WSL shell itself, not by
-# this script, so it's correct for any username. Only meaningful for the
-# "iupred3" env specifically -- there is no equivalent for a bare-PATH or
-# native-conda resolution, since a normal `pip install` env wouldn't need it.
+# PYTHONPATH. This is the documented default location inside a WSL conda env
+# named "iupred3" (`~` is expanded by the WSL shell). Used only for that env.
 PYMODULE_PYTHONPATH_WSL = {
     "iupred3_lib": "~/miniconda3/envs/iupred3/apps/iupred3",
 }
 
 
-# Sourced before every WSL-bridged conda call -- a plain `wsl.exe conda ...`
-# does NOT go through a login shell that sources conda's init script (the
-# same gotcha hit earlier this session doing WSL environment checks by hand),
-# so both the availability check and the real run need this, not just one.
+# Sourced before every WSL-bridged conda call: `wsl.exe conda ...` does not
+# source conda's init script, so both the availability check and the run need it.
 _WSL_CONDA_INIT = (
     "source ~/miniconda3/etc/profile.d/conda.sh 2>/dev/null || "
     "source ~/anaconda3/etc/profile.d/conda.sh 2>/dev/null"
@@ -124,12 +111,10 @@ _WSL_CONDA_INIT = (
 
 @functools.lru_cache(maxsize=None)
 def _conda_available(via_wsl):
-    """Cheap pre-check so we don't pay conda's own startup overhead (a real
-    cost -- confirmed ~10s per WSL cold start) on every binary lookup on a
-    system that simply doesn't have conda at all. Cached once per
-    (native/WSL) -- always call this positionally, never by keyword, or
-    lru_cache treats it as a different, uncached call (confirmed: this was
-    the actual reason repeat calls weren't getting cached during testing)."""
+    """Return whether conda is available (natively or via WSL).
+
+    Cached, because each conda start-up is slow (~10 s for a WSL cold start).
+    Call positionally: lru_cache keys keyword and positional calls separately."""
     if via_wsl:
         if shutil.which("wsl.exe") is None:
             return False
@@ -364,16 +349,9 @@ def check_module_ready(name, spec, overrides_by_module, pythonpath_by_module=Non
     return missing, resolved
 
 
-# Non-interactive version flag per binary, verified by direct test against
-# each real tool before adding it here -- not guessed. codonw is
-# deliberately absent: it has no non-interactive version flag, and probing
-# it with an unrecognized flag drops into its interactive menu
-# ("Press return or enter to continue"), which would hang a real run
-# waiting on stdin. hcatk and tango are also absent -- confirmed via a
-# timeout-guarded test that neither hangs, but neither prints anything
-# resembling a version string either (hcatk emits unrelated deprecation
-# warnings; tango just reports a normal usage error). Anything not in this
-# table returns "unknown" rather than a guessed or hung probe.
+# Non-interactive version flag per binary. codonw, hcatk and tango have no
+# usable version flag (codonw would open its interactive menu), so they and
+# anything else not listed report "unknown".
 VERSION_PROBES = {
     "pepstats": ["-version"],
     "perl": ["-v"],
@@ -566,13 +544,8 @@ def run_module(name, input_path, out_path, resolved, ref_dir=None, pythonpath_by
                 f"codon_usage: no cai.coa at {ref_dir} -- Stage 1 "
                 f"(calculate_indices.sh) hasn't been run for this species yet")
 
-        # species is derived from the input file's own name, same convention
-        # orchestrate_codonw.sh itself uses -- this assumes the input file IS
-        # already one species' sequences. For this project's own pooled,
-        # multi-species composite FASTAs, that assumption does NOT hold yet
-        # (a real, separately-tracked gap -- see the species-splitting
-        # adapter discussion) and this module should not be pointed at those
-        # files until that splitting step exists.
+        # The species reference is chosen by the input file name, so each input
+        # file must contain one species' sequences.
         species = input_path.stem
         script = HERE / "modules/codon_usage/obtain_indices.sh"
         scratch_dir = out_path.parent / f"_codon_usage_scratch_{out_path.stem}"
@@ -633,15 +606,9 @@ def run_module(name, input_path, out_path, resolved, ref_dir=None, pythonpath_by
         cmd = build_command(resolved["cpat"], "cpat",
                              ["-g", str(input_path), "-d", str(logit_model),
                               "-x", str(hexamer), "-o", str(prefix)])
-        # cwd=scratch_dir: confirmed by a real leftover file (CPAT_run_info.log
-        # found sitting at this repo's own root, not in any scratch dir) that
-        # CPAT writes at least one file to the process's actual cwd,
-        # independent of the -o prefix that scopes everything else. Without
-        # this, every real run pollutes whatever directory the user happened
-        # to invoke run_features.py from. For the wsl_conda case, Python's
-        # own subprocess cwd doesn't reach into the WSL bash session wsl.exe
-        # starts, so cd into the (WSL-translated) scratch dir inside the
-        # bash -lc string itself instead.
+        # CPAT writes CPAT_run_info.log to the working directory regardless of -o,
+        # so run it inside scratch_dir. For wsl_conda, cd inside the bash -lc string,
+        # since the subprocess cwd does not reach the WSL session.
         kind = resolved["cpat"][0]
         if kind == "wsl_conda":
             wsl_scratch = _win_to_wsl_path(str(scratch_dir))
@@ -653,12 +620,8 @@ def run_module(name, input_path, out_path, resolved, ref_dir=None, pythonpath_by
         if not raw.exists():
             raise FileNotFoundError(f"coding_potential produced no output at {raw}")
 
-        # CPAT uppercases every ID it writes and truncates pipe-delimited
-        # headers oddly (see repair_cpat_ids.py's module docstring for the
-        # confirmed real bug reports this fixes) -- always restore original
-        # case, using the species-specific extraction rule for the three
-        # species that need it, "generic" (first whitespace token, verbatim)
-        # for anything else, including this project's own composite headers.
+        # CPAT uppercases IDs and mangles pipe-delimited headers; restore the
+        # original IDs (see repair_cpat_ids.py). "generic" = first whitespace token.
         repair_script = HERE / "modules/coding_potential/repair_cpat_ids.py"
         subprocess.run([sys.executable, str(repair_script),
                          "--fasta", str(input_path), "--cpat-table", str(raw),
@@ -833,34 +796,14 @@ def _resume_skip(name, input_path, out_path, log):
 
 
 def _sanitize_aa_input(src_path, filtered_dir, log):
-    """Every protein-input module gets this applied to its input before
-    dispatch. Two separate, real, confirmed problems, not hypothetical:
+    """Clean a protein FASTA before any protein-level module runs.
 
-    1. Zero-length sequences -- a premature-stop translation landing at
-       amino acid 0 (447 sequences in one real trim of this project's own
-       Stage 4 output, 10 in another). An empty sequence handed to an
-       external tool (pepstats, hcatk/tango, DeepTMHMM2, LOCALIZER) risks
-       a hard crash or a degenerate score, not a clean skip.
+    - Drops zero-length sequences, which can crash external tools or give
+      degenerate scores.
+    - Strips a trailing '*' (stop symbol). Some tools crash on it (the ESM
+      tokenizer in DeepTMHMM2); others silently count it as a residue.
 
-    2. A literal trailing '*' stop-codon character -- confirmed two
-       different failure modes on the same real tracked locus
-       (AT5G15843.1) in one session: DeepTMHMM2 hard-crashes on it
-       (KeyError in ESM's tokenizer, no mapping for '*'), but `disorder`
-       silently scored the sequence WITH the '*' included as if it were a
-       225th/226th real residue -- every length- and composition-dependent
-       value in that row was wrong, with no error raised at all. Silent
-       corruption is worse than a crash. This directly violates this
-       project's own F1 rule (six protein-level tools -- IUPred3, pyHCA,
-       TANGO, PEPSTATS, DeepTMHMM, LOCALIZER -- must never see the stop
-       symbol) -- stripped here, once, centrally, rather than trusting
-       five different wrapped tools to each handle it correctly on their
-       own (confirmed at least one doesn't).
-
-    `disorder` already filters <30 residues internally (its own threshold,
-    unrelated to either fix here); untested whether the other four
-    modules have their own length floor, so both fixes apply uniformly.
-    Cached per source file so the same batch file isn't re-processed once
-    per module that needs it."""
+    Cached per source file, so a batch file is cleaned once for all modules."""
     filtered_dir.mkdir(parents=True, exist_ok=True)
     dest_path = filtered_dir / src_path.name
     if dest_path.exists():
@@ -969,13 +912,8 @@ def main():
     if not args.batch and not args.nt and not args.aa:
         sys.exit("Need --batch DIR, or at least one of --nt/--aa")
 
-    # Resolve to absolute before anything reaches run_module -- a relative
-    # path is only valid relative to THIS process's cwd, but a WSL-bridged
-    # module runs in WSL's own bash with a different cwd entirely (confirmed:
-    # a relative --aa path silently produced "file does not exist" inside
-    # WSL, since _win_to_wsl_path only recognizes an absolute Windows path
-    # to translate -- a bare relative path passed through untouched and
-    # meant nothing on the other side of the bridge).
+    # Resolve to absolute paths: WSL-bridged modules run with a different cwd,
+    # and _win_to_wsl_path translates only absolute Windows paths.
     args.out_dir = args.out_dir.resolve()
     if args.nt:
         args.nt = args.nt.resolve()
@@ -996,26 +934,9 @@ def main():
         if "=" not in entry:
             sys.exit(f"--module-ref expects MODULE=DIR, got: {entry!r}")
         mod, val = entry.split("=", 1)
-        # Resolve to absolute now, same reason as --nt/--aa/--batch/--out-dir
-        # above -- confirmed via a real test that CPAT itself has no cwd
-        # requirement (it embeds whatever path string it's given verbatim,
-        # and works fine from an unrelated cwd when given absolute paths),
-        # but a relative --module-ref value would still silently depend on
-        # whatever cwd this script happened to be invoked from, which is
-        # exactly the class of bug already found and fixed once this
-        # session for the other path arguments.
-        #
-        # EXCEPT: a value that's already a POSIX-absolute path (starts with
-        # "/") is left untouched. This script runs natively on Windows, so
-        # Path(val).resolve() interprets a WSL-native path like
-        # "/home/user/..." as relative to Windows' own filesystem root --
-        # confirmed by a real failure, --module-ref localization=<a real
-        # WSL path to LOCALIZER.py, which only exists inside WSL, not
-        # mirrored on the Windows side> came out mangled into something
-        # under Git's own install directory. _win_to_wsl_path() already
-        # knows to leave a non-Windows-looking path alone; this needs the
-        # same guard one step earlier, before Windows' own Path.resolve()
-        # gets a chance to mangle it first.
+        # Resolve to absolute, as for the other path arguments, except values
+        # that are already POSIX-absolute ("/..."): on Windows, Path.resolve()
+        # would turn a WSL-native path into a wrong Windows path.
         if val.startswith("/"):
             refs_by_module[mod] = val
         else:

@@ -6,27 +6,13 @@
 #               either a biological highly-expressed-gene (HEG) seed set or a
 #               statistical top-5%-Fop correspondence-analysis fallback.
 # Author:       Adekola Owoyemi, Casola Lab, TAMU
-# Version:      0.1.0 (pre-release, unshared — see Changelog below for what changed)
-# Changelog:    0.1.0 - Added content validation for built .coa reference files
-#                        (line-count sanity check + scan of CodonW's own log
-#                        output for its known failure phrases) — existence and
-#                        non-empty checks alone do not catch a reference that
-#                        CodonW accepted but could not build correctly.
-#                      - Added explicit --basis-mode selection (auto/heg/coa).
-#                        Previously the choice between HEG-based and COA-based
-#                        reference building was implicit: whichever HEG file
-#                        happened to exist (or didn't) silently decided it.
-#                        That's still the default ("auto") behavior, but it is
-#                        now a named, logged choice rather than an accident of
-#                        file presence — and "heg" mode hard-fails instead of
-#                        silently falling back if no HEG file is found, for
-#                        anyone who wants HEG-or-nothing guarantees.
-#                      - HEG lookup now checks both naming conventions: the
-#                        OrthoFinder-expanded output (`_expanded_heg.txt`) AND
-#                        the raw GFF-keyword seed output straight from
-#                        extract_heg_ids.py (`_heg_ids.txt`), since orthology
-#                        expansion is optional and the two scripts previously
-#                        used mismatched filenames with no bridge between them.
+# Version:      0.1.0
+# Notes:        - Built .coa files are validated (minimum line count, and
+#                 CodonW's log is scanned for its known failure messages).
+#               - --basis-mode selects the reference: auto (HEG file if
+#                 present, else COA/Fop), heg (fail without a HEG file), coa.
+#               - HEG files are looked up as <species>_expanded_heg.txt
+#                 (orthology-expanded), then <species>_heg_ids.txt.
 # ==============================================================================
 set -euo pipefail
 
@@ -62,7 +48,7 @@ cp "${clean_seqfile}" "${fasta_local}"
 log_file="${species}.std"
 
 # Check both naming conventions a HEG file might use — orthology-expanded
-# first (broader, cross-species-confirmed set), then the raw GFF-keyword
+# first (orthology-expanded set), then the raw GFF-keyword
 # seeds directly (valid on their own; orthology expansion is optional).
 HEG_FILE_EXPANDED="${heg_dir}/${species}_expanded_heg.txt"
 HEG_FILE_RAW="${heg_dir}/${species}_heg_ids.txt"
@@ -140,15 +126,8 @@ fi
 if [ -s "high_expression_ids.txt" ]; then
   echo "[$species] Extracting sequence fractions..." >> "${log_file}"
 
-  # Direct hash lookup, not regex matching (confirmed ~14 minutes on the real
-  # O. sativa run, ~38,489 headers x ~1,924 candidate regexes — an
-  # O(genes x candidate-IDs) design). Every ID reaching this point is already
-  # a clean "seqN" token produced by remap_seq_ids.py earlier in the
-  # pipeline, with no whitespace or special characters to worry about, so an
-  # exact hash-lookup does the identical job in O(genes) with no regex at
-  # all. This assumption holds specifically because this script is always
-  # called on the already-remapped FASTA (see run_species.sh) — if that ever
-  # changes, this lookup would need to change with it.
+  # Exact hash lookup on the remapped seqN IDs (O(genes); regex matching per
+  # ID was far slower). Requires the remapped FASTA from remap_seq_ids.py.
   awk '
     NR==FNR { ids[$1]=1; next }
     /^>/    { matched = (substr($0, 2) in ids) }
@@ -177,9 +156,8 @@ fi
 # genes") while still emitting a short, technically-non-empty .coa file. Scan
 # for those phrases in exactly the log lines CodonW itself just wrote (not
 # the whole log, which may contain earlier unrelated content), and refuse to
-# treat the reference as valid if any appear — this is a real, confirmed
-# CodonW behavior (garbled/incomplete references producing plausible-looking
-# but deficient output), not a hypothetical.
+# treat the reference as valid if any appear (CodonW can write plausible but
+# deficient tables when the reference set is too small).
 if [ -s "high_expression.fna" ]; then
   NEW_LOG_LINES=$(tail -n "+$((CODONW_STAGE1_LOG_START + 1))" "${log_file}")
   if echo "${NEW_LOG_LINES}" | grep -qiE "not calculated|FAILED|Problems with the number genes|no .* found in the high bias dataset"; then
@@ -207,13 +185,8 @@ fi
 
 if [ ! -f cai.coa ]; then
   echo "[$species] WARNING: cai.coa was not produced or was rejected by validation. Stage 2 will halt (no fallback)." >> "${log_file}"
-  # Real bug, confirmed live: this used to detect the failure (the warning
-  # above) but never actually exit non-zero -- the script fell off the end
-  # and returned exit 0 regardless, so a caller checking $? saw success even
-  # though no reference was built at all. Confirmed on a real run: this
-  # exact path was hit when the input FASTA's headers didn't match the HEG
-  # ID list's ID format (multi-field Araport11 headers vs. bare gene IDs),
-  # high_expression.fna came out empty, and the script exited 0 anyway.
+  # Exit non-zero so callers see the failure. Common cause: FASTA header IDs
+  # that do not match the HEG ID list format.
   echo "ERROR: cai.coa was not produced for '${species}' -- see ${log_file} for why (common cause: the input FASTA's headers don't match the HEG ID list's ID format exactly)." >&2
   exit 1
 fi

@@ -6,12 +6,7 @@
 #               indices. Zero-Default Failsafe enforced — refuses to fall back to
 #               CodonW's built-in generic reference tables.
 # Author:       Adekola Owoyemi, Casola Lab, TAMU
-# Version:      0.1.0 (pre-release, unshared — see Changelog below for what changed)
-# Changelog:    0.1.0 - Removed a duplicated copy of this script's body that had
-#                        been accidentally concatenated onto an earlier draft
-#                        (two full script bodies, two shebang lines, running
-#                        CodonW twice per species with identical arguments).
-#                        This is the single, correct version.
+# Version:      0.1.0
 # ==============================================================================
 set -euo pipefail
 

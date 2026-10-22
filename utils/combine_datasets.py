@@ -195,14 +195,8 @@ def main(args):
                 columns_to_add.append(enrich_col_map[h])
 
             final_headers = base_headers + columns_to_add
-            # delimiter="\t", always: without this, csv.DictWriter silently
-            # falls back to its own default (comma) regardless of what
-            # delimiter the inputs actually used -- confirmed via a real
-            # test, merging two genuinely tab-detected TSVs produced a
-            # comma-delimited output. Output is always TSV regardless of
-            # input delimiter (CSV in, CSV+CSV mixed, whatever) to match
-            # this project's own convention, which is TSV throughout --
-            # not just "match whatever the base file happened to be."
+            # Output is always tab-separated, whatever the input delimiters
+            # (csv.DictWriter would otherwise default to commas).
             writer = csv.DictWriter(outfile, fieldnames=final_headers, extrasaction='ignore', delimiter="\t",
                                     lineterminator="\n")  # LF only, like every other output in this repo
             writer.writeheader()

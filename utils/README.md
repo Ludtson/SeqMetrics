@@ -22,8 +22,7 @@ python utils/merge_modules.py --run-dir outputs/ --stack    # batch: also merged
   shows which module produced it.
 - **Outer join.** A sequence missing from one module keeps its row with
   empty cells. `merged.coverage.tsv` (or `merged/<stem>.coverage.tsv`)
-  lists rows per module and how many are missing. On a real
-  *A. thaliana* run, disorder lacked 2 sequences and coding_potential 1.
+  lists rows per module and how many are missing.
 - **`--stack`** (batch only) also writes `merged/ALL.tsv`, with every input
   file stacked and a `set` column. Columns are the union across files.
   tm_domain `Residues_*` columns that a batch never produced are filled
@@ -46,18 +45,10 @@ python utils/combine_datasets.py \
     -k Gene_ID:Seq_ID -o merged.tsv
 ```
 
-**Two things worth knowing before using it, both confirmed by direct
-test, not assumed:**
+**Notes:**
 
-- **Output is always TSV, regardless of input delimiter** (fixed this
-  session -- it previously silently defaulted to comma regardless of
-  whether the inputs were TSV, which would have produced a comma file
-  from two genuinely tab-delimited inputs; now hardcoded to tab-out,
-  matching this project's own convention, confirmed by test even when
-  the base file is CSV).
+- **Output is always TSV**, whatever the input delimiters.
 - **Output line endings are LF (`\n`) on every OS**, like every other
   output in this repo. Python's `csv` writer defaults to `\r\n` on every
   OS, even when the file is opened with `newline="\n"`, so the writer
-  sets `lineterminator="\n"` explicitly. The same default had put `\r` on
-  the basic, tail_hydrophobicity, disorder, tm_domain and localization
-  outputs until it was fixed in each writer.
+  sets `lineterminator="\n"` explicitly.

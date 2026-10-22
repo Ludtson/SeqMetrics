@@ -5,24 +5,12 @@
 #               handles configuration flags (including COA and HEG directories), 
 #               manages xargs queues, and consolidates final indices.
 # Author:       Adekola Owoyemi, Casola Lab, TAMU
-# Version:      0.1.0 (pre-release, unshared — see Changelog below for what changed)
-# Changelog:    0.1.0 - Added -b/--basis-mode (auto/heg/coa): makes the choice
-#                        between biological (HEG) and statistical (COA/Fop)
-#                        reference-building an explicit, logged decision
-#                        instead of an implicit consequence of which files
-#                        happen to exist. Default 'auto' preserves the
-#                        original behavior exactly.
-#                      - Added -w/--work-dir: the scratch/sandbox directory
-#                        now defaults to <caller's cwd>/work instead of being
-#                        anchored to this script's own install location, and
-#                        can be overridden explicitly. If a work dir from a
-#                        previous run already exists at the resolved path, it
-#                        is archived (renamed with a timestamp) rather than
-#                        being silently reused or deleted, so prior debugging
-#                        artifacts are never lost across separate invocations.
-#                        Per-species sandboxes are still hard-reset *within* a
-#                        single run (reset_workdir) — that isolation is a
-#                        correctness requirement, not just tidiness.
+# Version:      0.1.0
+# Notes:        - -b/--basis-mode (auto/heg/coa) makes the reference choice
+#                 explicit and logged; auto is the default.
+#               - -w/--work-dir sets the scratch directory (default <cwd>/work);
+#                 an existing work dir is archived with a timestamp, never
+#                 reused or deleted. Per-species sandboxes are reset each run.
 # ==============================================================================
 set -euo pipefail
 

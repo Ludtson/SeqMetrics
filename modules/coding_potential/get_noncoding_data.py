@@ -332,10 +332,7 @@ def main():
         else:
             selected_ids = random.sample(all_ids, subset_count)
 
-        # newline="\n": real sequence data fed to make_hexamer_tab/
-        # make_logitModel -- a Windows-Python CRLF write would land a stray
-        # \r inside sequence content (same bug class fixed elsewhere in
-        # SeqMetrics this session).
+        # LF only: CR characters would end up inside the sequences.
         with open(SUBSET_OUT_FA, "w", newline="\n") as out_subset:
             for seq_id in selected_ids:
                 seq = all_cds[seq_id]

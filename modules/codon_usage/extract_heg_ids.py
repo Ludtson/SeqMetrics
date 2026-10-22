@@ -5,7 +5,7 @@
 #               by parsing CDS FASTA headers and cross-referencing functional 
 #               annotations inside corresponding GFF3 files via a BFS queue.
 # Credits:      Adekola Owoyemi, Casola Lab, TAMU
-# Version:      0.1.0 (pre-release, unshared)
+# Version:      0.1.0
 # ==============================================================================
 
 import re
@@ -174,13 +174,8 @@ def process_species(task_data):
                             heg_ids_found.append(fasta_id)
 
         # 3. Write Output
-        # newline='\n': force LF-only regardless of host OS. Without this,
-        # running on Windows Python writes CRLF, and calculate_indices.sh's
-        # awk lookup (running in WSL/Linux) then keys on "ID\r" -- which
-        # never matches a CDS FASTA's clean "ID" header, so every sequence
-        # extraction silently comes back empty and cai.coa never gets built.
-        # Confirmed via a real run: 98 HEG IDs found here, zero sequences
-        # extracted downstream, until this fix.
+        # LF only: calculate_indices.sh matches IDs exactly; a trailing CR
+        # would make every lookup fail.
         with open(out_path, 'w', newline='\n') as out:
             for hid in sorted(list(set(heg_ids_found))):
                 out.write(f"{hid}\n")

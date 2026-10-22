@@ -6,7 +6,7 @@ delimited headers, the clean gene ID).
 Renames the first column header to 'Gene_ID'.
 
 Author:   Adekola Owoyemi, Casola Lab, TAMU
-Version:  0.1.0 (pre-release, unshared)
+Version:  0.1.0
 
 Usage:
   repair_cpat_ids.py \
@@ -14,45 +14,16 @@ Usage:
       --cpat-table species_cpat.tsv \
       --out repaired_best.tsv
 
---------------------------------------------------------------------------
-CHANGELOG vs. original (~/scripts/repair_cpat_ids.py)
---------------------------------------------------------------------------
-CPAT uppercases every ID it writes to its own output tables, and — for
-headers with no whitespace before the first "|" (this project's O. sativa
-convention, e.g. "OSJAP01G00010.5|chromosome:IRGSP-1.0:...") — it also
-keeps the entire pipe-chain as the ID, not just the gene ID before the
-first "|". Confirmed by direct test:
+Why this is needed:
+  CPAT uppercases every ID it writes. For headers with no whitespace before
+  the first "|" (e.g. "ID|chromosome:..."), it also keeps the whole pipe
+  chain as the ID. Some headers (e.g. CNCB GWH) start with an accession and
+  carry the gene ID in an "OriID=" field.
 
-    input header:  OSJAP01G00010.5|chromosome:IRGSP-1.0:1:1:1000:1|...
-    CPAT seq_ID:   OSJAP01G00010.5|CHROMOSOME:IRGSP-1.0:1:1:1000:1|...
-
-A second, DIFFERENT species-specific problem exists for B. rapa: its CDS
-FASTA header's first whitespace token is an internal accession
-("GWHTAAES000001"), not the canonical gene ID — the real ID only appears
-later in the header as "OriID=BraA01g000010.3C.mRNA". CPAT (like every
-other tool in this pipeline that reads a FASTA header naively) grabs that
-first token as its own seq_ID, so CPAT's raw output is keyed on
-"GWHTAAES000001", not "BraA01g000010.3C". This is the exact same
-B. rapa-specific problem already solved once for pepstats in
-pepstats_v2_extracted/remap_pepstats_ids.py — rather than re-derive it
-here, this script now reuses that exact same per-species canonical-ID
-extraction (fasta_id_athaliana / fasta_id_brassica_rapa /
-fasta_id_oryza_sativa), selected via --species, instead of the generic
-"first token, then split on |" rule the original script effectively used
-(and which is only actually correct for A. thaliana and O. sativa, not
-B. rapa).
-
-The lookup key on the CPAT-table side is still built by lowercasing (to
-undo CPAT's uppercasing) and, for O. sativa specifically, also stripping
-everything from the first "|" onward — mirroring the same fix already
-applied in codonw_extracted/bin/remap_seq_ids.py and
-hca_tango_extracted/bin/run_hca_tango.py. Both sides of the match
-(building the map from the FASTA, and looking up CPAT's own ID) go
-through the same per-species extraction where it matters, so case
-restoration, pipe-chain cleanup, and the B. rapa OriID= rewrite can't
-silently drift out of sync with each other or with the rest of the
-pipeline.
---------------------------------------------------------------------------
+How IDs are matched:
+  The lookup key on both sides is the first whitespace token, cut at the
+  first "|" and lowercased. The value written back is the canonical ID from
+  the FASTA header, extracted by the rule chosen with --species.
 """
 
 import argparse
@@ -60,10 +31,7 @@ import re
 import sys
 
 
-# --- Reused verbatim from pepstats_v2_extracted/remap_pepstats_ids.py ---
-# Same per-species canonical-ID extraction already validated there. Kept
-# duplicated (not imported) so this script stays runnable standalone from
-# any directory, same convention as the rest of this project's scripts.
+# Header ID rules (duplicated rather than imported so the script runs standalone).
 def fasta_id_athaliana(header): return header[1:].split()[0].split("|")[0].strip()
 def fasta_id_oryza_sativa(header): return header[1:].split("|")[0].strip()
 def fasta_id_brassica_rapa(header):
@@ -83,14 +51,7 @@ CANONICAL_ID_FN = {
     "athaliana": fasta_id_athaliana,
     "brassica_rapa": fasta_id_brassica_rapa,
     "oryza_sativa": fasta_id_oryza_sativa,
-    # Correct default for any header with no pipe-chain and no B. rapa-style
-    # OriID= convention -- e.g. this project's own composite
-    # "gene_id::role::node" headers, which have neither. Restores case only;
-    # does no species-specific cleanup, since there's none to do for a
-    # pipe-free, OriID=-free header. (fasta_id_athaliana would actually
-    # produce the identical result for such headers -- split("|")[0] on a
-    # string with no "|" is a no-op -- but naming this explicitly avoids
-    # implying an Athaliana-specific assumption for genes from any species.)
+    # Default: first whitespace token, case restored, no further cleanup.
     "generic": fasta_id_generic,
 }
 
@@ -113,21 +74,15 @@ def parse_args():
 
 
 def cpat_lookup_key(token: str) -> str:
-    """Normalize CPAT's own (uppercased, possibly pipe-chain-preserving)
-    ID into the same shape used as the map key: lowercase, and cut at the
-    first '|' the way O. sativa's raw header token would be. A no-op for
-    A. thaliana/B. rapa IDs, which never contain '|'."""
+    """Normalize a CPAT ID to the map key: cut at the first '|', lowercase."""
     return token.split("|")[0].lower()
 
 
 def load_fasta_ids(fasta_path, canonical_fn):
     """Return dict: cpat_lookup_key(raw_first_token) -> canonical gene ID.
 
-    The map KEY mimics what CPAT itself would have produced from this
-    header (first whitespace token, cut at '|', lowercased) so it can be
-    matched directly against CPAT's table output. The map VALUE is the
-    real, canonical, pipeline-wide gene ID for this species — which for
-    B. rapa is NOT the same string as the raw first token.
+    The key mimics CPAT's own ID for the header (first token, cut at '|',
+    lowercased); the value is the canonical gene ID from the chosen rule.
     """
     mapping = {}
     with open(fasta_path) as fh:
@@ -150,10 +105,7 @@ def repair_table(cpat_table, out_path, id_col, id_map):
     missing = 0
     header_processed = False
 
-    # newline="\n": this table's Gene_ID column is exactly the kind of thing
-    # this project joins by exact match against other feature tables (see
-    # the same fix applied in codon_usage/aggregation) -- a CRLF-corrupted
-    # ID would silently fail such a join with no error anywhere.
+    # LF only: a trailing CR would break exact-ID joins with other tables.
     with open(cpat_table) as inp, open(out_path, "w", newline="\n") as out:
         for line in inp:
             if not line.strip():

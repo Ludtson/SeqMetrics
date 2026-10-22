@@ -4,7 +4,7 @@ HCA + TANGO production pipeline (auditable, parallel, timed)
 
 Author:       Adekola Owoyemi
 Maintained by: Casola Lab
-Version:      0.1.0 (pre-release, unshared)
+Version:      0.1.0
 
 USAGE:
     ./run_hca_tango.py input.faa
@@ -23,70 +23,17 @@ OUTPUTS (under --work-dir):
     <input>.tango_logs/         per-sequence TANGO cmd/stdout/stderr + failures.log
     <input>.run_summary.txt
 
---------------------------------------------------------------------------
-Changelog vs. original (~/scripts/run_hca_tango.py) — see DECISIONS.md for
-full rationale and validation:
-
-  1. CRITICAL: fasta_iter() used to keep the *entire* raw header text after
-     ">" as the sequence "name" (no whitespace split). hcatk normalizes its
-     own output keys to the first whitespace-delimited token, so the join
-     `if name in hca` silently failed for every header carrying extra
-     fields (species descriptions, coordinates, etc.) — i.e. essentially
-     all real headers in this project. This produced an empty or
-     near-empty task list with no error raised anywhere.
-     Confirmed by direct test: hcatk given ">gene1 | Symbols: FOO | desc"
-     wrote back ">gene1 78 0.003 0.013" (first token only) — the original
-     script's `name` would still have been the full ">gene1 | Symbols:
-     FOO | desc" string, which is not "gene1" and never matches.
-
-  2. CRITICAL: for pipe-delimited headers with NO whitespace before the
-     first "|" (e.g. this project's O. sativa CDS FASTA convention,
-     "ID|chromosome:...|..."), hcatk's own whitespace-only tokenization
-     cannot separate the ID from the pipe-chain either — it would treat
-     the whole chain as one "id". This is the identical bug already found
-     and fixed in codonw_extracted/bin/remap_seq_ids.py this project. Two
-     independent third-party binaries (hcatk, tango) each do their own
-     uncontrolled ID parsing, so the robust fix is the same one used for
-     CodonW: remap every sequence to a clean "seqN" ID before handing the
-     FASTA to either tool, and restore original IDs only in the final
-     output table. This guarantees hcatk and tango always agree on IDs,
-     for any species' header convention, without per-species parsing.
-
-  3. Unescaped `name` (and `seq`) were spliced into a `shell=True` command
-     STRING for TANGO. Any header/ID containing spaces, "|", quotes, or
-     other shell metacharacters (again: most real headers here) would be
-     reinterpreted by the shell — e.g. "|" as an actual pipe — silently
-     corrupting or breaking the invocation, independent of bug #1/#2.
-     Fixed by building an argv LIST and calling subprocess without
-     shell=True (verified empirically to produce identical TANGO output
-     to the shell=True form, with none of the parsing risk). Remapping to
-     clean seqN IDs (fix #2) removes the metacharacter risk at the source
-     as well — this is defense in depth, not a replacement for it.
-
-  4. A single TANGO failure raised RuntimeError inside a worker, which
-     ProcessPoolExecutor would surface via fut.result() and crash the
-     entire batch — one bad sequence kills a multi-hour run. Now caught
-     per-sequence, logged to <prefix>.tango_logs/failures.log with the
-     original ID, and skipped; the run continues and reports a final
-     failure count instead of dying partway through.
-
-  5. Only TANGO's AGG/AMYLO tokens were kept; TURN/HELIX/HELAGG/BETA are
-     parsed from the exact same stdout at zero extra cost and were being
-     discarded. Now all six are captured as columns, following the same
-     "capture what the tool already gives you" pattern used in the
-     IUPred rebuild (mean/median/frac/etc. all derived from output IUPred
-     already produces).
-
-  6. Sequences with a trailing "*" (stop-codon symbol, common in CDS-
-     derived protein FASTA) or that are empty after stripping are now
-     detected and skipped with a logged reason, rather than silently fed
-     to HCA/TANGO as-is or crashing.
-
-  7. --work-dir added (default: caller's cwd, not the script's own
-     location), with timestamped archiving of any pre-existing output for
-     the same input prefix — same convention as codonw_extracted and
-     iupred_extracted in this project, instead of overwriting in place.
---------------------------------------------------------------------------
+DESIGN NOTES (rationale and validation: DECISIONS.md):
+    - Every sequence is remapped to a short ID (seqN) before hcatk and TANGO,
+      which tokenize IDs differently; original IDs are restored only in the
+      final table.
+    - TANGO is called with an argument list (no shell), so IDs and sequences
+      are never interpreted by a shell.
+    - A failing sequence is logged to <input>.tango_logs/failures.log and
+      skipped; the run continues and reports a failure count.
+    - All six TANGO totals are reported: AGG, AMYLO, TURN, HELIX, HELAGG, BETA.
+    - A trailing '*' is removed; sequences empty after that are skipped and
+      logged.
 """
 
 import subprocess
@@ -118,22 +65,12 @@ def require_cmd(cmd, help_text):
 
 
 def _check_hcatk_shebang():
-    """Documented, recurring bug (not hypothetical -- confirmed on a real
-    install): pip's shebang-rewrite step, run when installing pyHCA's
-    `hcatk` console script, can truncate the installed file's own leading
-    bytes -- the file ends up starting mid-word (e.g. 'TART LICENCE ###...'
-    instead of the real
-    '#!/usr/bin/env python3\\n\\n# START LICENCE ###...'). Verified against
-    a real working install, not reconstructed -- the missing prefix is
-    '#!/usr/bin/env python3' + a blank line + '# S' (single '#', not
-    triple). `which hcatk` still resolves it fine (the file exists, is
-    executable, is on PATH),
-    but running it hands bash a Python source file with no valid shebang,
-    which then tries to interpret every line as a shell command and fails
-    with cryptic 'command not found' / syntax errors that look nothing
-    like a missing-shebang problem unless you already know to look for it.
-    Checked here once, before every run, since `which` alone can't catch
-    this and the failure otherwise reads as unrelated Python errors."""
+    """Exit with a fix if the installed `hcatk` lacks a shebang line.
+
+    pip's shebang rewrite can truncate the start of pyHCA's `hcatk` script
+    (it then begins mid-word, e.g. 'TART LICENCE ###'). `which` still finds
+    it, but bash runs it as a shell script and fails with misleading errors.
+    The missing prefix is '#!/usr/bin/env python3', a blank line, and '# S'."""
     path = shutil.which("hcatk")
     if path is None:
         return  # require_cmd("hcatk", ...) already caught and reported this
@@ -157,14 +94,11 @@ def _check_hcatk_shebang():
 
 
 def clean_original_id(header: str) -> str:
-    """Extract the true sequence identifier from a raw FASTA header.
+    """Return the sequence ID from a raw FASTA header.
 
-    Same logic as codonw_extracted/bin/remap_seq_ids.py's
-    original_id_from_header(), reused here deliberately so every tool in
-    this pipeline agrees on what "the ID" means for a given header. Split
-    on whitespace first (drops description fields), then split on "|"
-    (drops pipe-chains that immediately follow the ID with no whitespace,
-    e.g. this project's O. sativa convention).
+    First whitespace-separated token, then the part before the first '|'
+    (handles headers like 'ID|chromosome:...'). Same rule as
+    codon_usage/remap_seq_ids.py, so all modules agree on IDs.
     """
     token = header.split()[0] if header.split() else ""
     if not token:
@@ -260,10 +194,7 @@ with open(SUMMARY_FILE, "w", newline="\n") as s:
     s.write("TANGO version: not queried (interactive binary)\n\n")
 
 # ----------------------------------
-# Step 0: remap to clean seqN IDs (fixes #1/#2 at the source — see
-# DECISIONS.md). Every downstream tool (hcatk, tango) only ever sees
-# clean, whitespace/pipe-free IDs, so their independent internal ID
-# parsing can never disagree.
+# Step 0: remap to short seqN IDs so hcatk and TANGO always agree on IDs.
 # ----------------------------------
 id_map = {}          # seqN -> original_header (full, for reference)
 id_to_original = {}  # seqN -> clean_original_id (used in final output)
@@ -283,12 +214,7 @@ log(f"INFO Loaded {len(records)} sequences, remapped to clean IDs")
 if args.dry_run:
     log(f"DRY-RUN would write remapped FASTA -> {REMAP_FASTA}")
 else:
-    # newline="\n": this FASTA is fed straight to hcatk/tango as real sequence
-    # input -- if this ever runs under Windows Python, plain text mode writes
-    # CRLF, and a stray "\r" landing at the end of every sequence line is not
-    # a safe no-op for a tool parsing raw sequence characters (same failure
-    # class as the confirmed CRLF/HEG-ID bug in codon_usage, but here it can
-    # corrupt the sequence data itself, not just an ID lookup).
+    # LF only: a "\r" at line ends would become part of the sequence.
     with open(REMAP_FASTA, "w", newline="\n") as f:
         for seqn, seq in records:
             f.write(f">{seqn}\n{seq}\n")
@@ -309,17 +235,7 @@ hca_cmd = [
 if args.dry_run:
     log("DRY-RUN " + " ".join(hca_cmd))
 else:
-    # Real gap found and fixed 2026-09-21: this used to discard stderr
-    # outright (stderr=subprocess.DEVNULL). hcatk is noisy on stderr even
-    # on success (an ete3/PyQt4 import warning irrelevant to 'segment'
-    # mode, a BiopythonDeprecationWarning), which is why it was silenced
-    # in the first place -- but that also silenced every REAL error,
-    # confirmed the hard way: a real ValueError (pyHCA's 'rU' file mode,
-    # removed in Python 3.11) surfaced here only as a bare
-    # CalledProcessError with no indication of the actual cause, and had
-    # to be re-diagnosed by re-running hcatk directly outside this
-    # wrapper. Captured now instead of discarded, and printed on failure
-    # only -- stays quiet on the success path, same as before.
+    # hcatk writes harmless warnings to stderr on success; show stderr only on failure.
     result = subprocess.run(hca_cmd, stderr=subprocess.PIPE, text=True)
     if result.returncode != 0:
         sys.stderr.write(result.stderr)
@@ -329,23 +245,13 @@ else:
 # Parse Global_HCA_score.
 # Header line format for `-m domain` is:
 #   >protein_id protein_length pvalue score
-# (confirmed against pyHCA source, pyHCA/core/annotateHCA.py:
-#  outf.write(">{} {} {:.3f} {:.3f}\n".format(prot, len(sequence), pvalue, score))
-# — score is the LAST field, i.e. parts[3]; the tool's own header comment
-# undersells this as a 3-field format and doesn't mention pvalue, but the
-# actual write call is 4 fields and this indexing is correct.)
+# (pyHCA/core/annotateHCA.py writes 4 fields; the score is parts[3].)
 # ----------------------------------
 hca = {}
 if not args.dry_run:
     with open(HCA_FILE) as f:
         for line in f:
-            # Only ">"-prefixed lines are per-sequence score lines. Without
-            # this check, `domain`/`cluster` annotation lines (also >=4
-            # whitespace-split fields, in `-m domain` output) get miscounted
-            # as pseudo-sequences keyed "domain"/"cluster" — confirmed via
-            # smoke test: a 3-sequence input reported "5 sequences parsed"
-            # before this fix. Harmless for the real join (those keys never
-            # match a real seqN ID) but wrong bookkeeping worth closing.
+            # Only ">" lines are per-sequence scores; skip domain/cluster lines.
             if not line.startswith(">"):
                 continue
             parts = line.split()
@@ -450,9 +356,7 @@ if failures:
 # ----------------------------------
 # Write final TSV — original sequence IDs restored here, not before.
 # ----------------------------------
-# newline="\n": this project routinely joins feature tables by exact ID
-# match across stages (genes.tsv, composite headers, etc.) -- a trailing
-# CRLF-corrupted ID would silently fail such a join with no error anywhere.
+# LF only: a trailing "\r" would break exact-ID joins with other tables.
 with open(OUT_TSV, "w", newline="\n") as out:
     out.write("Seq_ID\tGlobal_HCA_score\t" + "\t".join(f"TANGO_{k}" for k in TANGO_FIELDS) + "\n")
     for seqn in sorted(results, key=lambda s: int(s.replace("seq", ""))):

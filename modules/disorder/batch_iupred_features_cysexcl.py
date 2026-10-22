@@ -152,10 +152,9 @@ def compute_features_for_protein(
     # trusted for the AGGREGATE statistics: since IUPred cannot see disulfide
     # bonds, a Cys held rigid by a real disulfide can still be scored as
     # disorder-prone from local composition alone. Rather than guessing a
-    # substitute identity (which risks its own composition bias — Ser, for
-    # instance, is itself disorder-promoting, and DNG/AG measurably differ in
-    # Cys content, so a substitution's bias would land unevenly between
-    # classes), Cys positions are simply excluded from every statistic below.
+    # substitute identity (which adds its own composition bias; Ser, for
+    # instance, is disorder-promoting), Cys positions are excluded from every
+    # statistic below.
     # No sequence length change, no invented residue identity.
     keep_idx = [i for i, ch in enumerate(seq) if ch != "C"]
     n_kept = len(keep_idx)

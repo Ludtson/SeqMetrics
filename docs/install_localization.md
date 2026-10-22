@@ -118,8 +118,7 @@ python run_localizer.py proteins.faa --localizer-script ... --output OUTDIR \
 - **CPU cap (`--java-cpus`, default 1):** each Java (WEKA) process
   LOCALIZER starts would otherwise size its garbage-collector and
   compiler threads to every core of the machine, so N chunks use far
-  more than N cores. On a 128-core machine, 8 input files × 4 chunks
-  reached about 170 cores. The wrapper now sets
+  more than N cores. The wrapper sets
   `JAVA_TOOL_OPTIONS="-XX:ActiveProcessorCount=1 -XX:+UseSerialGC"` for
   every LOCALIZER call. Expect about `chunk-jobs × java-cpus` cores per
   input file, plus short pepstats/perl steps. `--java-cpus 0` turns the

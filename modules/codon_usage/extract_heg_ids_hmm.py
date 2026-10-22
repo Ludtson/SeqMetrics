@@ -96,8 +96,7 @@ def main():
     # awk lookup (WSL/Linux) keys on an exact "ID" match against the CDS
     # FASTA header; a CRLF-written ID list (what plain Windows Python text
     # mode produces) keys on "ID\r" instead and silently matches nothing.
-    # Same real bug confirmed and fixed in extract_heg_ids.py -- fixing here
-    # too before it gets triggered by running this one under Windows Python.
+    # LF only (see extract_heg_ids.py).
     with open(out_path, "w", newline="\n") as f:
         for hit_id in sorted(hit_ids):
             f.write(hit_id + "\n")

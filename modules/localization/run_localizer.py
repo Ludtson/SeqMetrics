@@ -93,8 +93,8 @@ def run_chunked(base_cmd, fasta: Path, outdir: Path, raw_out: Path, chunk_size: 
 def java_env(localizer_script: Path, java_cpus: int):
     """Environment that caps the CPU threads of every Java (WEKA) process LOCALIZER starts.
     Without a cap, each JVM sizes its garbage-collector and JIT thread pools to ALL cores of the
-    machine, so N parallel chunks use far more than N cores (8 sets x 4 chunks reached ~170 cores
-    on a 128-core workstation). -XX:ActiveProcessorCount makes the JVM act as if it had
+    machine, so N parallel chunks can use far more than N cores.
+    -XX:ActiveProcessorCount makes the JVM act as if it had
     `java_cpus` cores; -XX:+UseSerialGC removes the parallel GC threads.
     The JVM announces JAVA_TOOL_OPTIONS with one line on stderr, which LOCALIZER mixes into
     WEKA's output; only the parser patch in docs/install_localization.md skips it. So the cap

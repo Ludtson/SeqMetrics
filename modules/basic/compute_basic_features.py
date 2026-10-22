@@ -3,13 +3,8 @@
 Basic nucleotide features -- length, GC% -- computed directly from the CDS
 sequence, no external tool, no genomic/GFF context needed.
 
-Originally also computed protein length + 20 amino-acid composition
-percentages, but that duplicated PEPSTATS's own Residues and
-{Ala,Cys,...}_MolePct columns exactly (same 20 percentages, different
-naming convention) -- caught 2026-09-20, dropped rather than kept as a
-redundant cross-check nobody asked for. Nucleotide composition is the one
-thing no other module in this pipeline touches at all, which is the only
-reason this module exists on its own.
+Protein length and amino-acid composition are left to the composition
+module (PEPSTATS) to avoid duplicate columns.
 """
 import argparse
 import csv
