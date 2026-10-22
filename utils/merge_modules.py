@@ -37,6 +37,7 @@ MODULE_ID = {
     "basic": "Seq_ID", "tail_hydrophobicity": "Seq_ID", "composition": "Gene_ID",
     "aggregation": "Seq_ID", "disorder": "protein_id", "tm_domain": "Seq_ID",
     "localization": "ID", "codon_usage": "title", "coding_potential": "Gene_ID",
+    "genomic_context": "Seq_ID",
 }
 # secondary ID-like columns that are not features
 DROP = {"coding_potential": {"ID"}}

@@ -55,7 +55,13 @@ MODULES = {
     "coding_potential":    {"input": "nt", "requires": ["cpat"]},
     "tm_domain":           {"input": "aa", "requires": []},  # checked via venv binary, not conda -- see VENV_REQUIRES
     "localization":        {"input": "aa", "requires": ["pepstats", "perl", "java"]},
+    "genomic_context":     {"input": "nt", "requires": []},
 }
+
+# Annotation and genome files genomic_context looks for in its --module-ref
+# directory, by input file stem (first match wins).
+GENOMIC_CONTEXT_GFF = (".gff3", ".gff", ".gff3.gz", ".gff.gz")
+GENOMIC_CONTEXT_GENOME = (".fa", ".fasta", ".fna", ".fa.gz", ".fasta.gz", ".fna.gz")
 
 # Modules whose real dependency is an importable python module (not a PATH
 # binary) -- resolved via resolve_pymodule() instead of resolve_binary().
@@ -671,6 +677,31 @@ def run_module(name, input_path, out_path, resolved, ref_dir=None, pythonpath_by
         shutil.move(str(produced), str(out_path))
         shutil.rmtree(scratch_dir, ignore_errors=True)
 
+    elif name == "genomic_context":
+        # ref_dir holds each input's annotation and genome, named by the
+        # input file stem: <stem>.gff3 + <stem>.fa (see GENOMIC_CONTEXT_*),
+        # plus an optional <stem>.seqid_map.tsv.
+        if ref_dir is None:
+            raise ValueError(
+                "genomic_context needs --module-ref genomic_context=<dir with "
+                "<stem>.gff3 and <stem>.fa per input> (see docs/install_genomic_context.md)")
+        ref_dir = Path(ref_dir)
+        if ref_dir.resolve() == input_path.parent.resolve():
+            raise ValueError("genomic_context: --module-ref must not be the input directory "
+                             "(<stem>.fna there would be taken for the genome)")
+        stem = input_path.stem
+        gff = next((ref_dir / f"{stem}{e}" for e in GENOMIC_CONTEXT_GFF if (ref_dir / f"{stem}{e}").exists()), None)
+        genome = next((ref_dir / f"{stem}{e}" for e in GENOMIC_CONTEXT_GENOME if (ref_dir / f"{stem}{e}").exists()), None)
+        if gff is None or genome is None:
+            raise FileNotFoundError(f"genomic_context: need {stem}.gff3 (or .gff) and {stem}.fa "
+                                    f"(or .fasta/.fna, optionally .gz) in {ref_dir}")
+        cmd = [sys.executable, str(HERE / "modules/genomic_context/compute_genomic_context.py"),
+               str(input_path), "--gff", str(gff), "--genome", str(genome), "--out", str(out_path)]
+        seqid_map = ref_dir / f"{stem}.seqid_map.tsv"
+        if seqid_map.exists():
+            cmd += ["--seqid-map", str(seqid_map)]
+        subprocess.run(cmd, check=True)
+
     else:
         print(f"[run_features] '{name}' needs its own real invocation wired in "
               f"(see modules/{name}/ and docs/install_{name}.md) -- not yet "
@@ -681,6 +712,10 @@ def run_module(name, input_path, out_path, resolved, ref_dir=None, pythonpath_by
 
 
 EXT_FOR_INPUT = {"nt": ".fna", "aa": ".faa"}
+
+# Modules that always get the original IDs: they look sequences up in
+# another file by ID (genomic_context: the GFF), so dummy IDs cannot work.
+KEEP_IDS = {"genomic_context"}
 
 
 def _clean_codonw_table(src, dest):
@@ -876,7 +911,9 @@ def main():
                           "codon_usage specifically, this also assumes the input file IS "
                           "that one species' sequences, species taken from the filename. "
                           "For localization: the direct FILE path to LOCALIZER.py itself "
-                          "(never bundled -- see docs/install_localization.md).")
+                          "(never bundled -- see docs/install_localization.md). For "
+                          "genomic_context: a DIRECTORY with <stem>.gff3 and <stem>.fa per "
+                          "input (see docs/install_genomic_context.md).")
     ap.add_argument("--module-pythonpath", action="append", default=[], metavar="MODULE=PATH",
                      help="Extra PYTHONPATH entry for a module resolved via native "
                           "`conda run` (not WSL-bridged), needed only if that module's "
@@ -1041,6 +1078,8 @@ def main():
                          if p.exists()]
                 group = [_sanitize_aa_input(p, filtered_dir, log) if p.suffix == ".faa" else p for p in group]
                 feed, back = _prepare_ids(input_path.stem, group, real_input)
+                if name in KEEP_IDS:
+                    feed, back = real_input, None
                 tasks.append((name, feed, out_path, resolved, ref, back))
         else:
             input_path = args.nt if spec["input"] == "nt" else args.aa
@@ -1051,6 +1090,8 @@ def main():
                 continue
             group = ([_sanitize_aa_input(args.aa, filtered_dir, log)] if args.aa else []) + ([args.nt] if args.nt else [])
             feed, back = _prepare_ids("_single", group, real_input)
+            if name in KEEP_IDS:
+                feed, back = real_input, None
             tasks.append((name, feed, out_path, resolved, ref, back))
 
     def _run_one(task):

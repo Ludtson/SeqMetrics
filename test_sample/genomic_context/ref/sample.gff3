@@ -1,0 +1,11 @@
+##gff-version 3
+chr1	.	gene	11	140	.	+	.	ID=gA
+chr1	.	mRNA	11	140	.	+	.	ID=txA;Parent=gA
+chr1	.	CDS	21	50	.	+	0	Parent=txA
+chr1	.	CDS	101	130	.	+	0	Parent=txA
+chr1	.	gene	60	90	.	+	.	ID=gC
+chr1	.	mRNA	60	90	.	+	.	ID=txC;Parent=gC
+chr1	.	CDS	61	84	.	+	0	Parent=txC
+chr1	.	gene	195	265	.	-	.	ID=gB
+chr1	.	mRNA	195	265	.	-	.	ID=rna-txB;Parent=gB
+chr1	.	CDS	201	260	.	-	0	Parent=rna-txB;protein_id=protB

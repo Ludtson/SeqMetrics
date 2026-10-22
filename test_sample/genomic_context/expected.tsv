@@ -1,0 +1,5 @@
+Seq_ID	cds_exons	cds_span	cds_intron_total	kozak_score	overlaps_gene	nearest_gene_dist	ssr_count	ssr_bp	ssr_frac
+txA	2	110	50	-4.9725	1	0	0	0	0.0
+txC	1	24	0	-4.6203	1	0	0	0	0.0
+lcl|chr1_cds_protB_1	1	60	0	-4.6203	0	61	1	12	0.2
+missing1									

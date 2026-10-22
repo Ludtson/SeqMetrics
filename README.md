@@ -10,7 +10,8 @@ Every module takes one of:
 - a **protein FASTA** (`.faa`) — disorder, aggregation, composition,
   tail_hydrophobicity
 - a **nucleotide/CDS FASTA** (`.fna`) — basic (GC%), codon_usage,
-  coding_potential
+  coding_potential, genomic_context (which also needs the genome and its
+  GFF3)
 
 That's the whole contract: plain, uniquely-headered FASTA in.
 SeqMetrics does not inspect how you organized your data before that
@@ -61,10 +62,14 @@ architecture are in [`docs/assets/`](docs/assets/).
 | `coding_potential` | CPAT | nucleotide | `CPAT` (pip) + a pre-built per-species reference (`--module-ref`) | open-source; reference-building is a separate upstream step | [install_coding_potential.md](docs/install_coding_potential.md) |
 | `tm_domain` | DeepTMHMM2 | protein | isolated Python venv (not conda) | official DeepTMHMM requires registration; this uses `fteufel/DeepTMHMM2`, an ungated reimplementation | [install_tm_domain.md](docs/install_tm_domain.md) |
 | `localization` | LOCALIZER | protein | `pepstats`+`perl`+`java` + the LOCALIZER script (`--module-ref`) | GPL-3.0, plant-specific, must be installed from its own repo | [install_localization.md](docs/install_localization.md) |
+| `genomic_context` | — (pure Python) | nucleotide | the genome FASTA + GFF3 per input (`--module-ref`) | — | [install_genomic_context.md](docs/install_genomic_context.md) |
+
+`genomic_context` reports CDS structure (exons, span, introns), a Kozak
+start-context score, overlap with and distance to neighbouring genes, and
+simple sequence repeats in the CDS.
 
 Not yet built: a general-organism localization tool (LOCALIZER is
-plant-only), SSR-in-CDS, protein-domain (Pfam/HMMER), and gene-overlap
-features.
+plant-only) and protein-domain (Pfam/HMMER) features.
 
 **Known methodological risks:**
 - `codon_usage`/`coding_potential` need genuinely per-species input
@@ -131,6 +136,8 @@ names. So before any module runs, every input gets short dummy IDs
   inputs in `<out_dir>/_remapped/`. Maps are deterministic (input order),
   so `--resume` runs stay consistent.
 - `--no-remap` feeds modules the original IDs, which was the old behaviour.
+- `genomic_context` always gets the original IDs, because it looks each
+  sequence up in the GFF by ID.
 
 ### Rerunning after a failure: `--resume`
 
