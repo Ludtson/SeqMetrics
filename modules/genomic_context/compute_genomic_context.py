@@ -31,6 +31,16 @@ Columns:
                      (MISA defaults); ssr_bp merges overlapping repeats
 Rows for IDs that cannot be placed have empty feature columns.
 
+  kozak_logodds      only with --kozak-background: sum over the same window of
+                     log10 f(base) - log10 f_background(base), where f is the
+                     table behind kozak_score and f_background a saved table,
+                     e.g. from the species' igORFs. Base composition cancels,
+                     so scores compare across genomes.
+
+Sequences without an annotation (e.g. IGOR igORFs) can be located from their IDs with --id-coords. Kozak
+frequencies can be saved (--kozak-table-out) and reused (--kozak-table), e.g. to score igORFs against the
+species' genes.
+
 The GFF and genome must use the same sequence names. If they don't (for
 example GenBank names in one file and RefSeq names in the other), pass
 --seqid-map, a tab-separated file whose first two columns are the GFF name
@@ -131,6 +141,15 @@ def read_seqid_map(path):
     return m
 
 
+def read_kozak_table(path):
+    """Counts per window position (12 rows of A, C, G, T) as written by --kozak-table-out."""
+    with open(path, encoding="utf-8") as f:
+        rows = [{b: float(r[b]) for b in "ACGT"} for r in csv.DictReader(f, delimiter="\t")]
+    if len(rows) != 12:
+        sys.exit(f"[genomic_context] {path}: expected 12 positions, found {len(rows)}")
+    return rows
+
+
 def primitive(motif):
     """False if the motif is a repeat of a shorter unit, e.g. 'ATAT'."""
     k = len(motif)
@@ -149,14 +168,15 @@ def ssr(seq):
     return len(hits), bp, round(bp / len(seq), 6) if seq else 0.0
 
 
-def neighbours(genes, lo, hi, own_id):
-    """(overlaps another gene, distance to the nearest other gene) for the span lo..hi."""
+def neighbours(genes, lo, hi, own_id, envelope=True):
+    """(overlaps another gene, distance to the nearest other gene) for the span lo..hi. The sequence's own gene is
+    skipped by ID, or, without an ID and with envelope=True, as the gene that spans the whole CDS."""
     if not genes:
         return None, None
     ov, near = 0, None
     j = bisect.bisect_left(genes, (lo, 0, ""))
     for s, e, gid in genes[max(0, j - 50):j + 50]:
-        if (gid == own_id) if own_id else (s <= lo and e >= hi):
+        if (gid == own_id) if own_id else (envelope and s <= lo and e >= hi):
             continue
         d = 0 if (s <= hi and e >= lo) else (s - hi if s > hi else lo - e)
         ov = ov or int(d == 0)
@@ -170,36 +190,53 @@ def main():
     ap.add_argument("--gff", required=True, type=Path, help="GFF3 annotation (.gz accepted)")
     ap.add_argument("--genome", required=True, type=Path, help="Genome FASTA (.gz accepted)")
     ap.add_argument("--seqid-map", type=Path, help="GFF name -> genome name, tab-separated")
+    ap.add_argument("--id-coords", action="store_true",
+                    help="take each sequence's location from its ID instead of the GFF: '|'-separated fields 2-5 = "
+                         "sequence, start, end, strand, 0-based half-open (BED) coordinates including the stop codon, "
+                         "as in IGOR igORF IDs (e.g. Athaliana|Chr3|5931873|5931990|-|24). The GFF is still used for "
+                         "neighbouring genes.")
+    ap.add_argument("--kozak-table", type=Path,
+                    help="score Kozak windows against this frequency table (from --kozak-table-out) instead of one "
+                         "estimated from the input, e.g. igORFs against the species' genes")
+    ap.add_argument("--kozak-table-out", type=Path, help="write the Kozak base counts used for scoring (12 x ACGT)")
+    ap.add_argument("--kozak-background", type=Path,
+                    help="background Kozak table (from --kozak-table-out, e.g. of the species' igORFs); adds the "
+                         "kozak_logodds column")
     ap.add_argument("--out", required=True, type=Path)
     args = ap.parse_args()
 
     seqid_map = read_seqid_map(args.seqid_map) if args.seqid_map else {}
     key2tx, cds, parent, genes = read_gff(args.gff, seqid_map)
     genome = dict(fasta_iter(args.genome))
-    ids, linked = [], []
+    ids, placed_in = [], []  # placed_in: (Seq_ID, sequence, strand, [(start, end) 1-based], own gene ID or None)
     for sid, head in fasta_iter(args.nt, headers=True):
         ids.append(sid)
+        if args.id_coords:
+            f = sid.split("|")
+            if len(f) >= 5 and f[2].isdigit() and f[3].isdigit() and f[4] in "+-":
+                placed_in.append((sid, f[1], f[4], [(int(f[2]) + 1, int(f[3]))], None))
+            continue
         pid = re.search(r"\[protein_id=([^\]\s]+)\]", head)  # NCBI cds_from_genomic headers
         tid = next((key2tx[k] for k in (sid, pid and pid.group(1)) if k in key2tx), None)
         if tid in cds:
-            linked.append((sid, tid))
-    if ids and not linked:
-        sys.exit(f"[genomic_context] none of the {len(ids)} FASTA IDs (e.g. {ids[:3]}) matches a "
-                 f"transcript ID/Name or CDS protein ID in {args.gff}")
-    absent = [t for _, t in linked if cds[t][0][0] not in genome]
-    if linked and len(absent) > len(linked) / 2:
-        gff_names = sorted({cds[t][0][0] for t in absent})[:3]
-        sys.exit(f"[genomic_context] {len(absent)} of {len(linked)} linked sequences are on sequences "
-                 f"missing from the genome FASTA (GFF names e.g. {gff_names}; genome names e.g. "
-                 f"{list(genome)[:3]}). Use --seqid-map if the two files name sequences differently.")
+            chrom, strand = cds[tid][0][0], cds[tid][0][3]
+            segs = sorted((s[1], s[2]) for s in cds[tid] if s[0] == chrom)
+            placed_in.append((sid, chrom, strand, segs, parent.get(tid)))
+    if ids and not placed_in:
+        sys.exit(f"[genomic_context] none of the {len(ids)} FASTA IDs (e.g. {ids[:3]}) "
+                 + ("has sequence|start|end|strand in fields 2-5" if args.id_coords else
+                    f"matches a transcript ID/Name or CDS protein ID in {args.gff}"))
+    absent = [p for p in placed_in if p[1] not in genome]
+    if placed_in and len(absent) > len(placed_in) / 2:
+        names = sorted({p[1] for p in absent})[:3]
+        sys.exit(f"[genomic_context] {len(absent)} of {len(placed_in)} sequences lie on sequences missing from the "
+                 f"genome FASTA (e.g. {names}; genome names e.g. {list(genome)[:3]}). "
+                 f"Use --seqid-map if the GFF and genome name sequences differently.")
 
     rows, windows, n_placed = {sid: {} for sid in ids}, {}, 0
-    for sid, tid in linked:
-        segs = [s for s in cds[tid] if s[0] in genome]
-        if not segs:
+    for sid, chrom, strand, segs, own in placed_in:
+        if chrom not in genome:
             continue
-        chrom, strand = segs[0][0], segs[0][3]
-        segs = sorted((s[1], s[2]) for s in segs if s[0] == chrom)
         lo, hi = segs[0][0], segs[-1][1]
         g = genome[chrom]
         seq = "".join(g[s - 1:e] for s, e in segs)
@@ -212,7 +249,7 @@ def main():
             win = g[lo - 7:lo + 5] if lo >= 7 else ""
         if len(win) == 12 and win[6:9] == "ATG" and all(b in "ACGT" for b in win):
             windows[sid] = win
-        ov, near = neighbours(genes.get(chrom, []), lo, hi, parent.get(tid))
+        ov, near = neighbours(genes.get(chrom, []), lo, hi, own, envelope=not args.id_coords)
         n_ssr, ssr_bp, ssr_frac = ssr(seq)
         rows[sid] = {"cds_exons": len(segs), "cds_span": hi - lo + 1,
                      "cds_intron_total": sum(segs[i + 1][0] - segs[i][1] - 1 for i in range(len(segs) - 1)),
@@ -220,23 +257,39 @@ def main():
                      "ssr_count": n_ssr, "ssr_bp": ssr_bp, "ssr_frac": ssr_frac}
         n_placed += 1
 
-    counts = [defaultdict(lambda: 1) for _ in range(12)]
-    for w in windows.values():
-        for i, b in enumerate(w):
-            counts[i][b] += 1
+    if args.kozak_table:
+        counts = read_kozak_table(args.kozak_table)
+    else:
+        counts = [defaultdict(lambda: 1) for _ in range(12)]
+        for w in windows.values():
+            for i, b in enumerate(w):
+                counts[i][b] += 1
+    if args.kozak_table_out:
+        with open(args.kozak_table_out, "w", newline="") as o:
+            o.write("position\tA\tC\tG\tT\n")
+            for i, p in enumerate(list(range(-6, 0)) + list(range(1, 7))):
+                o.write(f"{p}\t" + "\t".join(str(counts[i][b]) for b in "ACGT") + "\n")
     total = [sum(counts[i][b] for b in "ACGT") for i in range(12)]
+    bg = read_kozak_table(args.kozak_background) if args.kozak_background else None
+    bg_total = [sum(bg[i][b] for b in "ACGT") for i in range(12)] if bg else None
     for sid, w in windows.items():
-        rows[sid]["kozak_score"] = round(sum(math.log10(counts[i][b] / total[i]) for i, b in enumerate(w)), 4)
+        lp = [math.log10(counts[i][b] / total[i]) for i, b in enumerate(w)]
+        rows[sid]["kozak_score"] = round(sum(lp), 4)
+        if bg:
+            rows[sid]["kozak_logodds"] = round(sum(lp) - sum(math.log10(bg[i][b] / bg_total[i])
+                                                                for i, b in enumerate(w)), 4)
 
+    columns = COLUMNS + (["kozak_logodds"] if bg else [])
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with args.out.open("w", newline="") as out:
-        w = csv.DictWriter(out, fieldnames=COLUMNS, delimiter="\t", lineterminator="\n")
+        w = csv.DictWriter(out, fieldnames=columns, delimiter="\t", lineterminator="\n")
         w.writeheader()
         for sid in ids:
             w.writerow({"Seq_ID": sid, **{k: ("" if v is None else v) for k, v in rows[sid].items()}})
 
-    print(f"[genomic_context] {len(ids)} sequences: {len(linked)} found in the GFF, {n_placed} placed "
-          f"on the genome, {len(windows)} with a Kozak window -> {args.out}", file=sys.stderr)
+    print(f"[genomic_context] {len(ids)} sequences: {len(placed_in)} located "
+          f"({'from IDs' if args.id_coords else 'in the GFF'}), {n_placed} placed on the genome, "
+          f"{len(windows)} with a Kozak window -> {args.out}", file=sys.stderr)
 
 
 if __name__ == "__main__":

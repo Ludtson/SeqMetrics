@@ -52,6 +52,41 @@ script directly): tab-separated, first column the GFF name, second the
 genome name; further columns are ignored. NCBI's assembly report lists
 both names for every sequence.
 
+## Sequences without an annotation (e.g. igORFs)
+
+Intergenic ORFs are not in the GFF. With `--id-coords` the script reads each
+location from the FASTA ID instead: `|`-separated fields 2–5 are sequence,
+start, end and strand, in 0-based half-open (BED) coordinates including the
+stop codon, as written by IGOR:
+
+```
+>Athaliana|Chr3|5931873|5931990|-|24
+```
+
+Only the IDs are used; sequences are taken from the genome. The GFF is still
+needed for the neighbouring-gene columns. For these sequences `cds_exons` is
+1 and `cds_intron_total` 0 by construction.
+
+```
+python modules/genomic_context/compute_genomic_context.py igorfs/Athaliana.fna --id-coords \
+    --gff genomes/Athaliana.gff3 --genome genomes/Athaliana.fa \
+    --kozak-table Athaliana.kozak_genes.tsv --out Athaliana_igorfs.tsv
+```
+
+## Kozak reference tables
+
+By default the Kozak frequencies come from the input file itself.
+`--kozak-table-out FILE` saves the counts used (12 positions × A/C/G/T), and
+`--kozak-table FILE` scores the input against a saved table instead. Uses:
+
+- **One reference for two sets**: score igORFs against the species' gene
+  table, so both sets are on the same scale.
+- **Log-odds against a background**: score the genes once against their own
+  table and once against an igORF table; the difference is
+  log10 f(genes) − log10 f(background) summed over the window, the usual
+  position-weight-matrix log-odds. Base composition cancels, so the score is
+  comparable between AT-rich and GC-rich genomes.
+
 ## Output columns
 
 | Column | Meaning |
